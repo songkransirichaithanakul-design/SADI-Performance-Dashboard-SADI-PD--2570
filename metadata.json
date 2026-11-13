@@ -1,0 +1,6 @@
+{
+  "name": "ระบบแสดงผลการดำเนินงานสถาบันพัฒนาการตรวจเงินแผ่นดิน (โครงการและงบประมาณ) 2570 | SADI",
+  "description": "ระบบแสดงผลการดำเนินงานสถาบันพัฒนาการตรวจเงินแผ่นดิน (โครงการและงบประมาณ) Real-time Annual Project and Budget Tracking Web Application for State Audit Development Institute (SADI) ปีงบประมาณ 2570",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
