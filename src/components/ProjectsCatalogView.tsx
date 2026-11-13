@@ -86,11 +86,22 @@ export const ProjectsCatalogView: React.FC<ProjectsCatalogViewProps> = ({
         .join(' ')
         .toLowerCase();
 
+      const normalizeCat = (cat: string) => {
+        let clean = cat.split('(')[0].replace(/^\d+\.\s*/, '').trim();
+        if (clean.includes('ภารกิจตามแผนปฏิบัติราชการ')) {
+          clean = 'ภารกิจแผนปฏิบัติราชการ 5 ปี';
+        }
+        return clean;
+      };
+
       const matchSearch = tokens.length === 0 || tokens.every((t) => haystack.includes(t));
       const matchFunding = selectedFundingFilter === 'all' || p.fundingSource === selectedFundingFilter;
       const matchQuarter = selectedQuarterFilter === 'all' || p.quarters.includes(selectedQuarterFilter);
       const matchStatus = selectedStatusFilter === 'all' || p.status === selectedStatusFilter;
-      const matchCategory = selectedCategoryFilter === 'all' || p.category === selectedCategoryFilter;
+      const matchCategory =
+        selectedCategoryFilter === 'all' ||
+        p.category === selectedCategoryFilter ||
+        normalizeCat(p.category) === normalizeCat(selectedCategoryFilter);
 
       return matchSearch && matchFunding && matchQuarter && matchStatus && matchCategory;
     });

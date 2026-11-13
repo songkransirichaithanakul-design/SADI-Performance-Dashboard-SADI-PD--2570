@@ -164,30 +164,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return { list, maxAllocated, maxCumAllocated };
   }, [projects, selectedFundingFilter]);
 
-  // Competency Categories breakdown (preserving rawCategory for click drilldown)
+  // Competency Categories breakdown (merged by clean name, sorted by budget share descending, numbered 1..N)
   const categoryBreakdown = useMemo(() => {
-    const colorPalette = ['#06B6D4', '#8B5CF6', '#F59E0B', '#10B981', '#EC4899', '#3B82F6'];
-    const map = new Map<string, { rawCategory: string; count: number; allocated: number }>();
+    const colorPalette = ['#10B981', '#3B82F6', '#06B6D4', '#8B5CF6', '#F59E0B', '#0EA5E9', '#EC4899', '#F97316'];
+    const map = new Map<string, { filterKey: string; count: number; allocated: number }>();
 
     filteredProjects.forEach((p) => {
-      let shortCat = p.category.split('(')[0].trim();
-      if (shortCat.includes('ภารกิจตามแผนปฏิบัติราชการ')) {
-        shortCat = 'ภารกิจแผนปฏิบัติราชการ 5 ปี';
+      let cleanCat = p.category.split('(')[0].replace(/^\d+\.\s*/, '').trim();
+      if (cleanCat.includes('ภารกิจตามแผนปฏิบัติราชการ')) {
+        cleanCat = 'ภารกิจแผนปฏิบัติราชการ 5 ปี';
       }
-      const existing = map.get(shortCat) || { rawCategory: p.category, count: 0, allocated: 0 };
+      const existing = map.get(cleanCat) || { filterKey: cleanCat, count: 0, allocated: 0 };
       existing.count += 1;
       existing.allocated += p.budgetAllocated;
-      map.set(shortCat, existing);
+      map.set(cleanCat, existing);
     });
 
     return Array.from(map.entries())
-      .map(([name, data], index) => ({
-        name,
+      .sort((a, b) => b[1].allocated - a[1].allocated)
+      .map(([cleanName, data], index) => ({
+        rank: index + 1,
+        name: `${index + 1}. ${cleanName}`,
         ...data,
         color: colorPalette[index % colorPalette.length],
         share: metrics.totalAllocated > 0 ? (data.allocated / metrics.totalAllocated) * 100 : 0,
-      }))
-      .sort((a, b) => b.allocated - a.allocated);
+      }));
   }, [filteredProjects, metrics.totalAllocated]);
 
   // Donut Ring Geometry
@@ -808,7 +809,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 type="button"
                 onClick={() =>
                   onNavigateToProjects({
-                    category: cat.rawCategory,
+                    category: cat.filterKey,
                     funding: selectedFundingFilter,
                     quarter: selectedQuarterFilter,
                     status: 'all',
