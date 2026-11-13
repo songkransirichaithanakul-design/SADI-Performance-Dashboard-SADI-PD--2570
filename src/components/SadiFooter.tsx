@@ -42,10 +42,14 @@ export const SadiFooter: React.FC = () => {
 
           {/* Right: Institutional Contact (Arabic numerals) */}
           <div className="flex flex-col items-start md:items-end text-left md:text-right bg-[#070F20] p-4 rounded-xl border border-cyan-900/40 shadow-sm">
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="font-mono font-black text-xs bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 px-2 py-0.5 rounded">
-                SADI
-              </span>
+            <div className="flex items-center gap-2.5 mb-1.5">
+              <div className="px-2 py-1 rounded-lg bg-white/95 border border-cyan-400/30 shadow-sm shrink-0">
+                <img
+                  src="/assets/aistudio/Asset_8_300x_0_30a573ad.png"
+                  alt="สถาบันพัฒนาการตรวจเงินแผ่นดิน (SADI)"
+                  className="h-6 w-auto object-contain select-none"
+                />
+              </div>
               <span className="font-bold text-xs text-white tracking-tight">
                 สถาบันพัฒนาการตรวจเงินแผ่นดิน
               </span>

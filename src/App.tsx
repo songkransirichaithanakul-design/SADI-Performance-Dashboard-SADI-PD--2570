@@ -95,7 +95,7 @@ const MainAppContent: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#050A15] text-slate-100 transition-colors selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div className="min-h-screen flex flex-col bg-[#F8F7F4] text-slate-100 transition-colors selection:bg-cyan-500/30 selection:text-cyan-200">
       {/* Top Navbar */}
       <Navbar
         currentTab={currentTab}

@@ -23,11 +23,20 @@ export const SadiLogo: React.FC<SadiLogoProps> = ({
     lg: 'text-base',
   };
 
+  const imgHeights = {
+    sm: 'h-6',
+    md: 'h-7',
+    lg: 'h-9',
+  };
+
   return (
     <div className={`inline-flex items-center gap-3 ${className}`}>
-      {/* Clean authoritative text seal badge - NO cartoonish or unconvincing SVG illustration */}
-      <div className={`font-mono font-bold tracking-widest rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-100 dark:border-zinc-700 dark:bg-zinc-800/90 dark:text-zinc-100 ${badgeSizes[size]}`}>
-        SADI
+      <div className={`rounded-xl bg-white/95 border border-cyan-400/30 shadow-sm inline-flex items-center justify-center ${badgeSizes[size]}`}>
+        <img
+          src="/assets/aistudio/Asset_8_300x_0_30a573ad.png"
+          alt="สถาบันพัฒนาการตรวจเงินแผ่นดิน (SADI)"
+          className={`${imgHeights[size]} w-auto object-contain select-none`}
+        />
       </div>
 
       {showSubtitle && (

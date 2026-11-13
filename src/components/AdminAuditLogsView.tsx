@@ -243,18 +243,18 @@ export const AdminAuditLogsView: React.FC = () => {
       {/* SUB-TAB 2: AUTHORIZED USERS */}
       {activeSubTab === 'users' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="bg-[#091224] border border-cyan-900/40 rounded-2xl p-5 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="font-bold text-white text-base">
                 รายชื่อบุคลากรผู้ได้รับสิทธิ์เข้าใช้งานตามเกณฑ์ สตง. 2570
               </h3>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-400 mt-0.5">
                 เฉพาะผู้มีรายชื่อเท่านั้นจึงจะสามารถเข้าสู่ระบบและบันทึกผลการดำเนินงานจริงได้
               </p>
             </div>
             <button
               onClick={() => setShowAddUser(!showAddUser)}
-              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 flex items-center gap-1.5 cursor-pointer shadow-sm"
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0"
             >
               <UserPlus className="w-4 h-4" />
               <span>{showAddUser ? 'ยกเลิก' : '+ เพิ่มรายชื่อผู้ได้รับสิทธิ์'}</span>

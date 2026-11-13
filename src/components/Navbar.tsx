@@ -58,8 +58,12 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => setCurrentTab('dashboard')}
               className="text-left flex items-center gap-3 cursor-pointer group min-w-0"
             >
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-600/20 border border-cyan-500/40 flex items-center justify-center font-mono font-black text-xs text-cyan-300 shadow-[0_0_15px_rgba(6,182,212,0.2)] group-hover:border-cyan-400 transition-colors shrink-0">
-                SADI
+              <div className="h-10 px-2.5 py-1 rounded-xl bg-white/95 border border-cyan-400/40 flex items-center justify-center shadow-[0_0_15px_rgba(6,182,212,0.2)] group-hover:border-cyan-300 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.35)] transition-all shrink-0">
+                <img
+                  src="/assets/aistudio/Asset_8_300x_0_30a573ad.png"
+                  alt="สถาบันพัฒนาการตรวจเงินแผ่นดิน (SADI)"
+                  className="h-7 w-auto object-contain select-none"
+                />
               </div>
               <div className="flex flex-col min-w-0">
                 <span className="font-bold text-white text-xs sm:text-sm tracking-tight whitespace-nowrap truncate max-w-[210px] sm:max-w-[300px] lg:max-w-[340px] group-hover:text-cyan-200 transition-colors">

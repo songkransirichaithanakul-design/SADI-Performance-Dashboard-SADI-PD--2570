@@ -11,22 +11,22 @@
   }
 }
 
-/* Standard Carbon Blue scrollbars */
+/* Standard Pearl White page scrollbars */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: #060D1A;
+  background: #ECEAE4;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(6, 182, 212, 0.45);
+  background: rgba(14, 116, 144, 0.4);
   border-radius: 9999px;
-  border: 2px solid #060D1A;
+  border: 2px solid #ECEAE4;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(34, 211, 238, 0.8);
+  background: rgba(6, 182, 212, 0.75);
 }
 
 /* High-visibility scrollbar for wide data tables */
