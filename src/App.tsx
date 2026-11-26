@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Navbar } from './components/Navbar';
 import { DashboardView } from './components/DashboardView';
+import { GanttTimelineView } from './components/GanttTimelineView';
 import { ProjectsCatalogView } from './components/ProjectsCatalogView';
 import { ProjectsUpdateView } from './components/ProjectsUpdateView';
 import { AdminAuditLogsView } from './components/AdminAuditLogsView';
@@ -43,9 +44,11 @@ const MainAppContent: React.FC = () => {
       initialParams?.get('category')
   );
 
-  const [currentTab, setCurrentTab] = useState<'dashboard' | 'projects' | 'update' | 'admin'>(
+  const [currentTab, setCurrentTab] = useState<'dashboard' | 'timeline' | 'projects' | 'update' | 'admin'>(
     initialTabParam === 'projects'
       ? 'projects'
+      : initialTabParam === 'timeline'
+      ? 'timeline'
       : initialTabParam === 'update' && !isPublicView
       ? 'update'
       : 'dashboard'
@@ -78,11 +81,12 @@ const MainAppContent: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleNavTabChange = (tab: 'dashboard' | 'projects' | 'update' | 'admin') => {
+  const handleNavTabChange = (tab: 'dashboard' | 'timeline' | 'projects' | 'update' | 'admin') => {
     if (tab === 'projects') {
       setIsDrilldownMode(false);
     }
     setCurrentTab(tab);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleOpenEditModal = (project: Project) => {
@@ -112,7 +116,25 @@ const MainAppContent: React.FC = () => {
         {(currentTab === 'dashboard' || (currentTab === 'admin' && currentUser.role !== 'admin')) && (
           <DashboardView
             onNavigateToProjects={handleNavigateToProjects}
+            onNavigateToTimeline={() => {
+              setCurrentTab('timeline');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
             onOpenProjectDetail={(id) => setSelectedProjectId(id)}
+          />
+        )}
+
+        {currentTab === 'timeline' && (
+          <GanttTimelineView
+            onOpenProjectDetail={(id) => setSelectedProjectId(id)}
+            onGoToUpdatePage={
+              !isPublicView
+                ? () => {
+                    setCurrentTab('update');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }
+                : undefined
+            }
           />
         )}
 

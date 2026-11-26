@@ -15,11 +15,12 @@ import {
   UserCheck,
   Share2,
   Edit3,
+  CalendarRange,
 } from 'lucide-react';
 
 interface NavbarProps {
-  currentTab: 'dashboard' | 'projects' | 'update' | 'admin';
-  setCurrentTab: (tab: 'dashboard' | 'projects' | 'update' | 'admin') => void;
+  currentTab: 'dashboard' | 'timeline' | 'projects' | 'update' | 'admin';
+  setCurrentTab: (tab: 'dashboard' | 'timeline' | 'projects' | 'update' | 'admin') => void;
   onOpenUserModal: () => void;
   onOpenNotifications: () => void;
   onOpenShareModal: () => void;
@@ -66,7 +67,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 />
               </div>
               <div className="flex flex-col min-w-0">
-                <span className="font-bold text-white text-xs sm:text-sm tracking-tight whitespace-nowrap truncate max-w-[210px] sm:max-w-[300px] lg:max-w-[340px] group-hover:text-cyan-200 transition-colors">
+                <span className="font-bold text-white text-xs sm:text-sm tracking-tight whitespace-nowrap truncate max-w-[190px] sm:max-w-[260px] lg:max-w-[300px] group-hover:text-cyan-200 transition-colors">
                   รายงานความก้าวหน้าแผนพัฒนาศักยภาพบุคลากร สตง. 2570
                 </span>
                 <span className="text-[10px] sm:text-[11px] font-medium text-cyan-400/80 whitespace-nowrap truncate font-mono">
@@ -77,7 +78,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Zone 2: Nav links */}
-          <nav className="hidden md:flex items-center gap-1 lg:gap-2">
+          <nav className="hidden md:flex items-center gap-1 lg:gap-1.5">
             <button
               onClick={() => setCurrentTab('dashboard')}
               className={`px-3 py-1.5 rounded-xl text-xs lg:text-sm font-medium transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
@@ -87,7 +88,19 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <LayoutDashboard className="w-4 h-4 text-cyan-400" />
-              <span>ภาพรวม Dashboard</span>
+              <span>ภาพรวม</span>
+            </button>
+
+            <button
+              onClick={() => setCurrentTab('timeline')}
+              className={`px-3 py-1.5 rounded-xl text-xs lg:text-sm font-medium transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                currentTab === 'timeline'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold shadow-[0_0_15px_rgba(6,182,212,0.15)]'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+              }`}
+            >
+              <CalendarRange className="w-4 h-4 text-cyan-400" />
+              <span>ไทม์ไลน์ (Gantt)</span>
             </button>
 
             <button
@@ -126,7 +139,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
               >
                 <History className="w-4 h-4 text-cyan-400" />
-                <span>จัดการระบบ (Admin)</span>
+                <span>Admin</span>
               </button>
             )}
           </nav>
@@ -182,7 +195,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 className="hidden sm:flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-xl border border-cyan-800/60 bg-[#0A1730] text-cyan-200 text-xs cursor-pointer hover:border-cyan-500/60 transition-colors"
               >
                 <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
-                <span className="font-medium truncate max-w-[120px]">{currentUser.name}</span>
+                <span className="font-medium truncate max-w-[110px]">{currentUser.name}</span>
               </button>
             )}
 
@@ -238,6 +251,20 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <LayoutDashboard className="w-4 h-4 text-cyan-400" />
             <span>ภาพรวม Dashboard</span>
+          </button>
+          <button
+            onClick={() => {
+              setCurrentTab('timeline');
+              setMobileMenuOpen(false);
+            }}
+            className={`w-full text-left px-3 py-2 rounded-xl text-sm font-medium flex items-center gap-2 ${
+              currentTab === 'timeline'
+                ? 'bg-cyan-500/20 text-cyan-300 font-semibold border border-cyan-500/40'
+                : 'text-slate-400'
+            }`}
+          >
+            <CalendarRange className="w-4 h-4 text-cyan-400" />
+            <span>ไทม์ไลน์โครงการ (Gantt)</span>
           </button>
           <button
             onClick={() => {

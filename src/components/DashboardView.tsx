@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Zap,
   MousePointerClick,
+  CalendarRange,
 } from 'lucide-react';
 import { ProjectSearchAutocomplete } from './ProjectSearchAutocomplete';
 
@@ -26,11 +27,13 @@ interface DashboardNavigateFilter {
 
 interface DashboardViewProps {
   onNavigateToProjects: (filter?: DashboardNavigateFilter) => void;
+  onNavigateToTimeline: () => void;
   onOpenProjectDetail: (projectId: string) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigateToProjects,
+  onNavigateToTimeline,
   onOpenProjectDetail,
 }) => {
   const {
@@ -244,6 +247,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0 pt-1">
+            <button
+              onClick={onNavigateToTimeline}
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold border border-cyan-600/60 bg-cyan-950/50 text-cyan-200 hover:bg-cyan-500/20 hover:text-white flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <CalendarRange className="w-3.5 h-3.5 text-cyan-400" />
+              <span>ไทม์ไลน์ (Gantt)</span>
+            </button>
             <button
               onClick={exportDataToCSV}
               className="px-3.5 py-2 rounded-xl text-xs font-semibold border border-cyan-800/60 bg-[#0A1730] text-cyan-200 hover:bg-[#0E2248] hover:text-white flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
@@ -466,9 +476,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </h3>
               <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
                 <MousePointerClick className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                <span>กดที่แท่งไตรมาส (เช่น Q1 {quarterlyTrend.list[0]?.count || 0} โครงการ) หรือกดปุ่มสถานะในแต่ละไตรมาสเพื่อเปิดดูรายละเอียดทุกโครงการ</span>
+                <span>กดที่แท่งไตรมาส (เช่น Q1 {quarterlyTrend.list[0]?.count || 0} โครงการ) หรือเปิด Gantt Timeline 12 เดือน</span>
               </p>
             </div>
+            <button
+              type="button"
+              onClick={onNavigateToTimeline}
+              className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-600/50 text-cyan-300 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap shrink-0 self-start sm:self-auto"
+            >
+              <CalendarRange className="w-3.5 h-3.5" />
+              <span>เปิด Gantt 12 เดือน</span>
+            </button>
           </div>
 
           {/* Interactive Colorful Quarterly Cards with Embedded Status Drilldown */}
@@ -857,59 +875,59 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <Sliders className="w-4 h-4 text-cyan-400" />
                 <span>ตัวจำลองการเบิกจ่ายงบประมาณ</span>
               </h3>
+              <Zap className="w-4 h-4 text-amber-400" />
             </div>
             <p className="text-xs text-slate-400">
-              เลื่อนแถบจำลองเพื่อวิเคราะห์งบประมาณคงเหลือตามอัตราการเบิกจ่าย
+              ปรับเลื่อนอัตราเบิกจ่ายเป้าหมายเพื่อดูวงเงินที่คาดว่าจะเบิกจ่ายและงบคงเหลือ
             </p>
           </div>
 
-          <div className="space-y-4 bg-[#060D1A] p-4 rounded-xl border border-cyan-950">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-medium text-slate-300">จำลองอัตราการเบิกจ่าย:</span>
-              <span className="font-mono font-bold text-cyan-400 text-sm tabular-nums">{simulatedRate}%</span>
+          <div className="space-y-4 py-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-300">อัตราเบิกจ่ายจำลอง</span>
+              <span className="text-2xl font-black font-mono text-cyan-300 tabular-nums">
+                {simulatedRate}%
+              </span>
             </div>
 
             <input
               type="range"
-              min="0"
-              max="100"
-              step="5"
+              min={0}
+              max={100}
+              step={5}
               value={simulatedRate}
               onChange={(e) => setSimulatedRate(Number(e.target.value))}
-              className="w-full accent-cyan-400 cursor-pointer h-2 bg-slate-800 rounded-lg"
+              aria-label="อัตราเบิกจ่ายจำลอง"
+              className="w-full accent-cyan-400 cursor-pointer"
             />
 
-            <div className="flex justify-between text-[10px] font-mono text-slate-400 tabular-nums">
-              <span>0%</span>
-              <span>25%</span>
-              <span>50%</span>
-              <span>75%</span>
-              <span>100%</span>
-            </div>
-
-            <div className="pt-2 border-t border-cyan-950 space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-400">ยอดเบิกจ่ายจำลอง:</span>
-                <span className="font-mono font-bold text-white tabular-nums">
-                  ฿{simulatedBurn.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">คงเหลือจำลอง:</span>
-                <span className="font-mono font-bold text-emerald-400 tabular-nums">
-                  ฿{simulatedRemaining.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                </span>
-              </div>
+            <div className="grid grid-cols-4 gap-1.5 font-mono text-xs">
+              {[25, 50, 75, 100].map((val) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setSimulatedRate(val)}
+                  className={`py-1.5 rounded-lg border transition-colors cursor-pointer ${
+                    simulatedRate === val
+                      ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 font-bold'
+                      : 'bg-[#060D1A] border-cyan-950 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {val}%
+                </button>
+              ))}
             </div>
           </div>
 
-          <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-900/40 text-xs text-cyan-200/90 flex items-start gap-2">
-            <Zap className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
-            <span>
-              {simulatedRate === 0
-                ? 'สถานะปัจจุบัน: ยังไม่มีการเบิกจ่ายจริง (งบคงเหลือ 100%)'
-                : `ที่อัตราเบิกจ่าย ${simulatedRate}% จะมีงบคงเหลือ ฿${(simulatedRemaining / 1000000).toFixed(2)}M`}
-            </span>
+          <div className="space-y-2.5 pt-2 border-t border-cyan-950 font-mono tabular-nums text-xs">
+            <div className="p-3 rounded-xl bg-[#060D1A] border border-cyan-900/50 flex items-center justify-between">
+              <span className="font-sans text-slate-400">ยอดเบิกจ่ายจำลอง</span>
+              <span className="font-bold text-cyan-300">฿{Math.round(simulatedBurn).toLocaleString()}</span>
+            </div>
+            <div className="p-3 rounded-xl bg-[#060D1A] border border-emerald-900/40 flex items-center justify-between">
+              <span className="font-sans text-slate-400">งบคงเหลือจำลอง</span>
+              <span className="font-bold text-emerald-400">฿{Math.round(simulatedRemaining).toLocaleString()}</span>
+            </div>
           </div>
         </div>
       </div>
