@@ -184,7 +184,29 @@ const MainAppContent: React.FC = () => {
           />
         )}
 
-        {currentTab === 'admin' && currentUser.role === 'admin' && !isPublicView && <AdminAuditLogsView />}
+        {currentTab === 'admin' && currentUser.role === 'admin' && !isPublicView && (
+          <AdminAuditLogsView
+            onImportCompleteAndDisplay={() => {
+              setSelectedFundingFilter('all');
+              setSelectedStatusFilter('all');
+              setSelectedQuarterFilter('all');
+              setSelectedCategoryFilter('all');
+              setSearchQuery('');
+              setIsDrilldownMode(false);
+              setCurrentTab('dashboard');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            onGoToDashboard={() => {
+              setCurrentTab('dashboard');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            onGoToCatalogPage={() => {
+              setIsDrilldownMode(false);
+              setCurrentTab('projects');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          />
+        )}
           </main>
 
           <SadiFooter />

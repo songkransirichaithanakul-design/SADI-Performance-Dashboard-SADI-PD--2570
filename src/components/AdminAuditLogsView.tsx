@@ -11,16 +11,33 @@ import {
   Search,
   Filter,
   FileText,
-  KeyRound,
-  Sparkles,
+  Cloud,
+  Lock,
 } from 'lucide-react';
+import { GoogleSheetsSyncPanel } from './GoogleSheetsSyncPanel';
+import { ImportPreviewConfirmPanel } from './ImportPreviewConfirmPanel';
+import type { ImportParseResult } from '../utils/spreadsheet';
+import type { Project } from '../types';
 
-export const AdminAuditLogsView: React.FC = () => {
+interface AdminAuditLogsViewProps {
+  onImportCompleteAndDisplay?: () => void;
+  onGoToDashboard?: () => void;
+  onGoToCatalogPage?: () => void;
+}
+
+export const AdminAuditLogsView: React.FC<AdminAuditLogsViewProps> = ({
+  onImportCompleteAndDisplay,
+  onGoToDashboard,
+  onGoToCatalogPage,
+}) => {
   const {
+    projects,
+    currentUser,
     auditLogs,
     authorizedUsers,
     addAuthorizedUser,
     removeAuthorizedUser,
+    importProjectsFromFile,
     resetAllData,
     exportDataToJSON,
     exportDataToCSV,
@@ -30,9 +47,40 @@ export const AdminAuditLogsView: React.FC = () => {
     dbSyncState,
   } = useApp();
 
-  const [activeSubTab, setActiveSubTab] = useState<'logs' | 'users' | 'backup'>('logs');
+  const [activeSubTab, setActiveSubTab] = useState<'sheets' | 'logs' | 'users' | 'backup'>('sheets');
   const [logSearch, setLogSearch] = useState('');
   const [actionFilter, setActionFilter] = useState<'all' | 'create' | 'update' | 'delete' | 'bulk_update'>('all');
+
+  // Admin Google Sheets Sync Preview State
+  const [sheetImportPreview, setSheetImportPreview] = useState<ImportParseResult | null>(null);
+  const [sheetImportError, setSheetImportError] = useState<string | null>(null);
+  const [sheetImportSuccess, setSheetImportSuccess] = useState<string | null>(null);
+
+  const handleConfirmSheetImport = async (
+    mergedProjects: Project[],
+    summaryNote: string,
+    meta: { fileName: string; updatedCount: number; newCount: number; affectedIds: string[] },
+    navigateToDisplayImmediately: boolean
+  ) => {
+    setSheetImportError(null);
+    try {
+      await importProjectsFromFile(mergedProjects, summaryNote, meta);
+      setSheetImportPreview(null);
+      if (navigateToDisplayImmediately && onImportCompleteAndDisplay) {
+        onImportCompleteAndDisplay();
+      } else {
+        setSheetImportSuccess(
+          `ยืนยันส่งและอัปเดตข้อมูลจาก "${meta.fileName}" สำเร็จ (${meta.updatedCount} โครงการเดิม${
+            meta.newCount > 0 ? ` และเพิ่มใหม่ ${meta.newCount} โครงการ` : ''
+          }) แสดงผลในระบบเรียบร้อยแล้ว`
+        );
+      }
+    } catch (err) {
+      setSheetImportError(
+        err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างบันทึกข้อมูลจาก Google Sheets'
+      );
+    }
+  };
 
   // New User Form State
   const [showAddUser, setShowAddUser] = useState(false);
@@ -99,8 +147,21 @@ export const AdminAuditLogsView: React.FC = () => {
           </div>
 
           {/* Sub Navigation Tabs */}
-          <div className="inline-flex p-1 bg-[#060D1A] rounded-xl border border-cyan-950 shrink-0">
+          <div className="flex flex-wrap p-1 bg-[#060D1A] rounded-xl border border-cyan-950 gap-1 shrink-0">
             <button
+              type="button"
+              onClick={() => setActiveSubTab('sheets')}
+              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeSubTab === 'sheets'
+                  ? 'bg-emerald-500/25 text-emerald-200 shadow-xs border border-emerald-600/60'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+              <span>ซิงก์ Google Sheets</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveSubTab('logs')}
               className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeSubTab === 'logs'
@@ -112,6 +173,7 @@ export const AdminAuditLogsView: React.FC = () => {
               <span>ประวัติการเปลี่ยนแปลง ({auditLogs.length})</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveSubTab('users')}
               className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeSubTab === 'users'
@@ -123,6 +185,7 @@ export const AdminAuditLogsView: React.FC = () => {
               <span>รายชื่อผู้มีสิทธิ์ ({authorizedUsers.length})</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveSubTab('backup')}
               className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeSubTab === 'backup'
@@ -136,6 +199,56 @@ export const AdminAuditLogsView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* SUB-TAB 0: ADMIN-ONLY GOOGLE SHEETS LINK SYNC */}
+      {activeSubTab === 'sheets' && (
+        <div className="bg-[#091224] border border-emerald-800/50 rounded-2xl p-5 sm:p-6 shadow-[0_8px_30px_rgba(16,185,129,0.08)] space-y-5">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-cyan-950 pb-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
+                <Lock className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="font-bold text-sm sm:text-base text-white flex flex-wrap items-center gap-2">
+                  <span>นำเข้าและซิงก์ข้อมูลจากลิงก์ Google Sheet หลัก (สิทธิ์เฉพาะ Admin)</span>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300">
+                    Admin Only
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  ล็อกการใช้ลิงก์ Google Sheet หลักของสถาบันไว้เฉพาะผู้ดูแลระบบ เพื่อป้องกันการเปลี่ยนลิงก์โดยไม่ตั้งใจ (ทีมงานทั่วไปยังคงกรอกในชีตและปรับปรุงผ่านหน้าเว็บ/นำเข้าไฟล์ตามฟอร์มระบบได้ตามปกติ)
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <GoogleSheetsSyncPanel
+            projects={projects}
+            onParsedResult={(result) => {
+              setSheetImportError(null);
+              setSheetImportSuccess(null);
+              setSheetImportPreview(result);
+            }}
+            onError={(msg) => {
+              if (msg) setSheetImportPreview(null);
+              setSheetImportError(msg);
+            }}
+          />
+
+          <ImportPreviewConfirmPanel
+            projects={projects}
+            currentUserName={currentUser.name}
+            importPreview={sheetImportPreview}
+            importError={sheetImportError}
+            importSuccessMessage={sheetImportSuccess}
+            onClearError={() => setSheetImportError(null)}
+            onCancelPreview={() => setSheetImportPreview(null)}
+            onConfirmImport={handleConfirmSheetImport}
+            onGoToDashboard={onGoToDashboard}
+            onGoToCatalogPage={onGoToCatalogPage}
+          />
+        </div>
+      )}
 
       {/* SUB-TAB 1: AUDIT LOGS */}
       {activeSubTab === 'logs' && (
