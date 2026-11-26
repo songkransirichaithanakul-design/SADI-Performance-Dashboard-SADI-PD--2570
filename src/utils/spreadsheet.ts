@@ -508,6 +508,17 @@ export function parseRawProjectRecords(
   }
 
   const seenCodeInImport = new Map<string, { rowNumber: number; name: string; code: string }>();
+  let skippedPlaceholderCount = 0;
+
+  const isPlaceholderProjectName = (name: string): boolean => {
+    const normalized = name.replace(/[\s()[\]（）]/g, '').toLowerCase();
+    return (
+      normalized === 'เพิ่มชื่อโครงการใหม่' ||
+      normalized === 'กรอกชื่อโครงการใหม่' ||
+      normalized === 'ชื่อโครงการใหม่' ||
+      normalized === 'ระบุชื่อโครงการ'
+    );
+  };
 
   rawRecords.forEach((rec, index) => {
     const rowNumber = index + 2; // Row accounting for header row
@@ -526,6 +537,12 @@ export function parseRawProjectRecords(
       (rawId ? idMap.get(rawId.toLowerCase()) : undefined) ||
       (rawCode ? codeMap.get(rawCode.toLowerCase()) : undefined) ||
       (rawName ? nameMap.get(rawName.toLowerCase()) : undefined);
+
+    // Automatically skip unfilled template placeholder rows (e.g. FND-70-27 | "(เพิ่มชื่อโครงการใหม่)")
+    if (!matched && (!rawName || isPlaceholderProjectName(rawName))) {
+      skippedPlaceholderCount += 1;
+      return;
+    }
 
     const base: Project = matched || {
       id: `imp-${Date.now()}-${index}`,
@@ -604,10 +621,16 @@ export function parseRawProjectRecords(
         : base.actualDateOrQuarter || '';
 
     const nextBatchesPlanned = Math.round(
-      parseNumberSafe(getField(rec, ['จำนวนรุ่นตามแผน', 'รุ่นตามแผน', 'batchesplanned']), base.batchesPlanned)
+      parseNumberSafe(
+        getField(rec, ['จำนวนรุ่น/โครงการตามแผน', 'จำนวนรุ่นตามแผน', 'รุ่นตามแผน', 'batchesplanned']),
+        base.batchesPlanned
+      )
     );
     const nextBatchesActual = Math.round(
-      parseNumberSafe(getField(rec, ['จำนวนรุ่นจริง', 'จำนวนรุ่นที่จัดจริง', 'รุ่นจริง', 'batchesactual']), base.batchesActual)
+      parseNumberSafe(
+        getField(rec, ['จำนวนรุ่น/โครงการจริง', 'จำนวนรุ่นจริง', 'จำนวนรุ่นที่จัดจริง', 'รุ่นจริง', 'batchesactual']),
+        base.batchesActual
+      )
     );
     const nextPartPlanned = Math.round(
       parseNumberSafe(
@@ -657,20 +680,41 @@ export function parseRawProjectRecords(
       if (matched.name !== updatedProject.name) {
         changedSummary.push('ปรับปรุงชื่อโครงการ');
       }
+      if (matched.category !== updatedProject.category) {
+        changedSummary.push('ปรับปรุงหมวดหมู่');
+      }
+      if (matched.targetGroup !== updatedProject.targetGroup) {
+        changedSummary.push('ปรับปรุงกลุ่มเป้าหมาย');
+      }
+      if (matched.fundingSource !== updatedProject.fundingSource) {
+        changedSummary.push(`แหล่งงบ: ${updatedProject.fundingSourceNameTh}`);
+      }
       if (matched.status !== updatedProject.status) {
         changedSummary.push(`สถานะ: ${statusToTh(matched.status)} → ${statusToTh(updatedProject.status)}`);
+      }
+      if (matched.quarters.join(',') !== updatedProject.quarters.join(',')) {
+        changedSummary.push(`ไตรมาส: ${updatedProject.quarters.join(', ')}`);
+      }
+      if (matched.executionDateSchedule !== updatedProject.executionDateSchedule) {
+        changedSummary.push('ปรับปรุงกำหนดการตามแผน');
+      }
+      if (matched.batchesPlanned !== updatedProject.batchesPlanned) {
+        changedSummary.push(`รุ่นตามแผน: ${matched.batchesPlanned} → ${updatedProject.batchesPlanned}`);
+      }
+      if (matched.batchesActual !== updatedProject.batchesActual) {
+        changedSummary.push(`รุ่นจริง: ${matched.batchesActual} → ${updatedProject.batchesActual}`);
+      }
+      if (matched.participantsPlanned !== updatedProject.participantsPlanned) {
+        changedSummary.push(`ผู้เข้าอบรมตามแผน: ${matched.participantsPlanned.toLocaleString()} → ${updatedProject.participantsPlanned.toLocaleString()}`);
+      }
+      if (matched.participantsActual !== updatedProject.participantsActual) {
+        changedSummary.push(`ผู้เข้าอบรมจริง: ${matched.participantsActual.toLocaleString()} → ${updatedProject.participantsActual.toLocaleString()}`);
       }
       if (matched.budgetAllocated !== updatedProject.budgetAllocated) {
         changedSummary.push(`งบจัดสรร: ฿${matched.budgetAllocated.toLocaleString()} → ฿${updatedProject.budgetAllocated.toLocaleString()}`);
       }
       if (matched.budgetActual !== updatedProject.budgetActual) {
         changedSummary.push(`ใช้จ่ายจริง: ฿${matched.budgetActual.toLocaleString()} → ฿${updatedProject.budgetActual.toLocaleString()}`);
-      }
-      if (matched.batchesActual !== updatedProject.batchesActual) {
-        changedSummary.push(`รุ่นจริง: ${matched.batchesActual} → ${updatedProject.batchesActual}`);
-      }
-      if (matched.participantsActual !== updatedProject.participantsActual) {
-        changedSummary.push(`ผู้เข้าอบรมจริง: ${matched.participantsActual} → ${updatedProject.participantsActual}`);
       }
       if ((matched.actualDateOrQuarter || '') !== (updatedProject.actualDateOrQuarter || '')) {
         changedSummary.push('ปรับปรุงวัน/ความก้าวหน้าจริง');
@@ -688,6 +732,12 @@ export function parseRawProjectRecords(
       changedSummary,
     });
   });
+
+  if (skippedPlaceholderCount > 0) {
+    warnings.push(
+      `ข้ามแถวว่างสำหรับเตรียมเพิ่มโครงการใหม่จำนวน ${skippedPlaceholderCount} แถว ("(เพิ่มชื่อโครงการใหม่)") — ระบบจะนำเข้าให้อัตโนมัติทันทีที่มีการกรอกชื่อโครงการจริง`
+    );
+  }
 
   const updatesCount = rows.filter((r) => !r.isNew).length;
   const changedUpdatesCount = rows.filter((r) => !r.isNew && r.hasChanges).length;

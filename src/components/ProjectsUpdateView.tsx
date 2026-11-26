@@ -376,7 +376,7 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
 
       const mergedProjects = [...newAdditions, ...Array.from(existingMap.values())];
       const effectiveNewCount = includeNewProjectsOnImport ? importPreview.newCount : 0;
-      const isGoogleSheetSource = importPreview.fileName.startsWith('Google Sheet:');
+      const isGoogleSheetSource = importPreview.fileName.startsWith('Google Sheet');
       const summaryNote = `${isGoogleSheetSource ? 'ซิงก์ข้อมูลจาก' : 'นำเข้าจากไฟล์'} "${importPreview.fileName}" (อัปเดต ${importPreview.updatesCount} โครงการ${
         effectiveNewCount > 0 ? `, เพิ่มใหม่ ${effectiveNewCount} โครงการ` : ''
       })`;
@@ -710,7 +710,7 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
               <Cloud className="w-3.5 h-3.5 text-emerald-400" />
               <span>Google Sheets ออนไลน์ (ร่วมกันกรอก)</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold">
-                Google Login
+                ซิงก์ผ่านลิงก์ทันที
               </span>
             </button>
             <button

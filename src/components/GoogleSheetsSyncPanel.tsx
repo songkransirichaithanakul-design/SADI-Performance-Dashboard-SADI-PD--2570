@@ -51,6 +51,8 @@ import {
 
 const SAVED_SHEET_URL_KEY = 'sadi_gsheet_url_v1';
 const SAVED_SHEET_TAB_KEY = 'sadi_gsheet_tab_v1';
+const DEFAULT_TEAM_SHEET_URL =
+  'https://docs.google.com/spreadsheets/d/1HxtKq6XrT-W6ft6mZ4JtWjbz2OSsSxCXqnHG7EF4D54/edit?gid=1071563626';
 const FIREBASE_AUTH_SETTINGS_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`;
 
 interface GoogleSheetsSyncPanelProps {
@@ -103,9 +105,9 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
 
   const [sheetInput, setSheetInput] = useState<string>(() => {
     try {
-      return localStorage.getItem(SAVED_SHEET_URL_KEY) || '';
+      return localStorage.getItem(SAVED_SHEET_URL_KEY) || DEFAULT_TEAM_SHEET_URL;
     } catch {
-      return '';
+      return DEFAULT_TEAM_SHEET_URL;
     }
   });
   const [metadata, setMetadata] = useState<SpreadsheetMetadata | null>(null);
@@ -126,6 +128,7 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
   const [scopeMissingNotice, setScopeMissingNotice] = useState<boolean>(false);
   const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
   const [copiedDomain, setCopiedDomain] = useState(false);
+  const [copiedSheetUrl, setCopiedSheetUrl] = useState(false);
   const [lastPulledAt, setLastPulledAt] = useState<string | null>(null);
   const [pendingModal, setPendingModal] = useState<PendingMutationModal>(null);
 
@@ -232,6 +235,23 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
     }
   };
 
+  const handleCopySheetLink = async () => {
+    const id = extractSpreadsheetId(sheetInput);
+    const shareUrl = sheetInput.trim().startsWith('http')
+      ? sheetInput.trim()
+      : id
+      ? `https://docs.google.com/spreadsheets/d/${id}/edit`
+      : '';
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopiedSheetUrl(true);
+      setTimeout(() => setCopiedSheetUrl(false), 2200);
+    } catch {
+      // Ignore clipboard failure
+    }
+  };
+
   const handlePullFromDirectLink = async () => {
     setLocalError(null);
     setStatusMessage(null);
@@ -245,40 +265,81 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
       return;
     }
 
+    const gidMatch = sheetInput.match(/[?&#]gid=(\d+)/);
+    const gidParam = gidMatch?.[1];
+    const sourceLabel = `Google Sheet (${spreadsheetId.slice(0, 8)}...)`;
+
     persistSheetPreference(sheetInput.trim());
     setIsPullingDirectLink(true);
     try {
-      const response = await fetch('/api/sheets/pull-link', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spreadsheetId }),
-      });
+      let parsed: ImportParseResult | null = null;
+      let fallbackError: string | null = null;
 
-      const payload = (await response.json().catch(() => ({}))) as {
-        base64?: string;
-        fileName?: string;
-        error?: string;
-      };
+      // Strategy 1: Direct browser CORS fetch from Google Visualization CSV export
+      // Works on every environment (Dev URL, Shared App URL, Static Preview) with both Editor & Viewer links.
+      try {
+        const gvizUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv${
+          gidParam ? `&gid=${gidParam}` : ''
+        }&_t=${Date.now()}`;
+        const directResp = await fetch(gvizUrl, { method: 'GET', mode: 'cors', cache: 'no-store' });
+        const contentType = (directResp.headers.get('content-type') || '').toLowerCase();
+        if (directResp.ok && contentType.includes('text/csv')) {
+          const csvBuffer = await directResp.arrayBuffer();
+          const candidate = parseImportedWorkbookBuffer(csvBuffer, projects, sourceLabel);
+          // Accept immediately if it parsed recognized project columns cleanly (or found real duplicate-code errors)
+          const isUnrecognizedHeaderError =
+            candidate.errors.length > 0 &&
+            candidate.errors.some((e) => e.includes('โครงสร้างคอลัมน์ไม่ตรงตามมาตรฐาน'));
+          if (!isUnrecognizedHeaderError) {
+            parsed = candidate;
+          }
+        }
+      } catch {
+        // Silently fall through to server-side multi-tab XLSX pull
+      }
 
-      if (!response.ok || !payload.base64) {
+      // Strategy 2: Server-side multi-tab XLSX pull fallback
+      if (!parsed) {
+        try {
+          const response = await fetch('/api/sheets/pull-link', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ spreadsheetId }),
+          });
+
+          const payload = (await response.json().catch(() => ({}))) as {
+            base64?: string;
+            fileName?: string;
+            error?: string;
+          };
+
+          if (response.ok && payload.base64) {
+            const binaryString = atob(payload.base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i += 1) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            parsed = parseImportedWorkbookBuffer(
+              bytes.buffer,
+              projects,
+              payload.fileName || sourceLabel
+            );
+          } else if (payload.error) {
+            fallbackError = payload.error;
+          }
+        } catch {
+          // Ignore network error if server proxy is unavailable on static preview
+        }
+      }
+
+      if (!parsed) {
         setLocalError(
-          payload.error ||
-            'ไม่สามารถดึงข้อมูลจากลิงก์ Google Sheet ได้ กรุณาตรวจสอบสิทธิ์การแชร์ชีตเป็น "ทุกคนที่มีลิงก์ดูได้"'
+          fallbackError ||
+            'ไม่สามารถดึงข้อมูลจากลิงก์ Google Sheet ได้ กรุณาตรวจสอบว่าตั้งค่าแชร์เป็น "ทุกคนที่มีลิงก์" (ใช้ได้ทั้งสิทธิ์แก้ไขได้ และดูได้ ไม่ต้องลดสิทธิ์ทีมงาน) แล้วลองกดดึงข้อมูลอีกครั้ง'
         );
         return;
       }
-
-      const binaryString = atob(payload.base64);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i += 1) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      const parsed = parseImportedWorkbookBuffer(
-        bytes.buffer,
-        projects,
-        payload.fileName || `Google Sheet (${spreadsheetId.slice(0, 8)}...)`
-      );
 
       if (parsed.errors.length > 0) {
         setLocalError(parsed.errors.join(' '));
@@ -462,6 +523,10 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
   };
 
   const isAuthenticated = Boolean(googleUser && accessToken);
+  const activeSheetId = extractSpreadsheetId(sheetInput);
+  const safeOpenSheetUrl = activeSheetId
+    ? `https://docs.google.com/spreadsheets/d/${activeSheetId}/edit`
+    : null;
 
   return (
     <div className="space-y-4">
@@ -472,9 +537,9 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
             1
           </span>
           <div>
-            <div className="font-semibold text-white">เข้าสู่ระบบ Google & สร้าง/เชื่อมชีต</div>
+            <div className="font-semibold text-white">แชร์ลิงก์ Google Sheet ให้ทีมงานกรอก</div>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              สร้าง Google Sheet มาตรฐาน 16 คอลัมน์แบบส่วนตัว (Private) หรือวางลิงก์ชีตที่มีอยู่แล้ว
+              ส่งลิงก์ Google Sheet ให้เจ้าหน้าที่ช่วยกันกรอก/แก้ไขความก้าวหน้า งบใช้จ่ายจริง และเพิ่มโครงการใหม่พร้อมกันได้
             </p>
           </div>
         </div>
@@ -483,9 +548,9 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
             2
           </span>
           <div>
-            <div className="font-semibold text-white">แชร์ให้เจ้าหน้าที่ร่วมกรอกออนไลน์</div>
+            <div className="font-semibold text-white">กดดึงข้อมูลล่าสุดจากลิงก์ทันที</div>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              กดแชร์ใน Google Sheets เฉพาะอีเมลทีมงาน (ไม่ต้องเปิดสาธารณะ) เพื่อช่วยกันบันทึกผลพร้อมกันหลายคน
+              วางลิงก์แล้วกดดึงข้อมูลได้ทันทีโดยไม่ต้องล็อกอิน Google (ระบบข้ามแถวว่าง "(เพิ่มชื่อโครงการใหม่)" ให้อัตโนมัติ)
             </p>
           </div>
         </div>
@@ -494,106 +559,145 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
             3
           </span>
           <div>
-            <div className="font-semibold text-white">ดึงข้อมูลล่าสุด & ยืนยันแสดงผล</div>
+            <div className="font-semibold text-white">ตรวจสอบพรีวิว & ยืนยันแสดงผล</div>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              กดดึงข้อมูลจากชีตมาตรวจสอบความเปลี่ยนแปลง แล้วกด "ยืนยันส่งและแสดงผลข้อมูลทันที"
+              ตรวจสอบรายการที่เปลี่ยนแปลงด้านล่าง แล้วกด "ยืนยันส่งและแสดงผลข้อมูลทันที" เพื่ออัปเดตหน้าแดชบอร์ด
             </p>
           </div>
         </div>
       </div>
 
-      {/* Auth Gate or Connected Workspace */}
-      {!isAuthenticated ? (
-        <div className="space-y-4">
-          <div className="rounded-xl p-5 sm:p-6 bg-[#060D1A] border border-cyan-800/60 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="flex items-start gap-3.5">
-              <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 flex items-center justify-center shrink-0">
-                <ShieldCheck className="w-5 h-5" />
-              </div>
-              <div className="space-y-1">
-                <div className="font-bold text-sm text-white">
-                  {needsReauthUser
-                    ? `ยืนยันสิทธิ์เชื่อมต่อ Google Sheets อีกครั้ง (${needsReauthUser.email || needsReauthUser.displayName})`
-                    : 'เชื่อมต่อ Google Sheets แบบปลอดภัยผ่านบัญชี Google (Google OAuth)'}
-                </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  {needsReauthUser
-                    ? 'เพื่อความปลอดภัยสูงสุด ระบบเก็บสิทธิ์การเข้าถึงไว้ในหน่วยความจำชั่วคราวเท่านั้น กรุณากดปุ่มด้านขวาเพื่อเชื่อมต่อ Google Sheets ในเซสชันนี้'
-                    : 'เข้าถึงเฉพาะไฟล์ Google Sheets ที่ท่านเป็นเจ้าของหรือได้รับแชร์สิทธิ์ ไม่จำเป็นต้องตั้งค่าไฟล์เป็นสาธารณะ'}
-                </p>
-              </div>
+      {/* PRIMARY: Direct Google Sheet Link Sync (Always Available — No Firebase Auth Required) */}
+      <div className="rounded-xl p-4 sm:p-5 bg-[#060D1A] border-2 border-cyan-600/60 shadow-[0_0_24px_rgba(6,182,212,0.12)] space-y-3.5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 flex items-center justify-center shrink-0 mt-0.5">
+              <Globe className="w-5 h-5" />
             </div>
-
-            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-              <button
-                type="button"
-                disabled={isSigningIn}
-                onClick={() => void handleSignIn()}
-                className="px-4 py-2.5 rounded-lg bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 font-semibold text-xs inline-flex items-center gap-2.5 shadow-sm transition-all cursor-pointer disabled:opacity-60 whitespace-nowrap"
-              >
-                {isSigningIn ? <Loader2 className="w-4 h-4 animate-spin text-blue-600" /> : <GoogleGIcon />}
-                <span>{isSigningIn ? 'กำลังเชื่อมต่อบัญชี Google...' : 'Sign in with Google · เชื่อมต่อ Google Sheets'}</span>
-              </button>
-              {needsReauthUser && (
-                <button
-                  type="button"
-                  onClick={() => void handleSignOut()}
-                  className="px-3 py-2.5 rounded-lg bg-[#091224] border border-cyan-900/60 text-slate-300 hover:text-white text-xs font-medium cursor-pointer"
-                >
-                  เปลี่ยนบัญชี
-                </button>
-              )}
+            <div className="space-y-0.5">
+              <div className="font-bold text-xs sm:text-sm text-white flex flex-wrap items-center gap-2">
+                <span>ดึงข้อมูลจากลิงก์ Google Sheet ร่วมกรอกโดยตรง (แนะนำ)</span>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300">
+                  พร้อมใช้งานทันที · ไม่ต้องล็อกอิน Google
+                </span>
+                {lastPulledAt && (
+                  <span className="text-[11px] font-mono text-cyan-300">· ดึงล่าสุด {lastPulledAt} น.</span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                ใช้ได้ทันทีกับชีตที่ตั้งค่าแชร์แบบ <strong className="text-slate-200">"ทุกคนที่มีลิงก์ (แก้ไขได้ / Editor)"</strong> โดย<strong className="text-emerald-300">ไม่ต้องลดสิทธิ์ของทีมงาน</strong> กดปุ่มสีฟ้าด้านล่างเพื่อดึงข้อมูลล่าสุดมาตรวจสอบและอัปเดตแดชบอร์ด
+              </p>
             </div>
           </div>
 
-          {/* Direct Link Pull Fallback — Works on every domain without Firebase OAuth domain allowlist */}
-          <div className="rounded-xl p-4 sm:p-5 bg-[#060D1A] border border-cyan-900/70 space-y-3">
-            <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 flex items-center justify-center shrink-0 mt-0.5">
-                <Globe className="w-4 h-4" />
-              </div>
-              <div className="space-y-0.5">
-                <div className="font-bold text-xs sm:text-sm text-white flex flex-wrap items-center gap-2">
-                  <span>ดึงข้อมูลจากลิงก์ Google Sheet โดยตรง (ไม่ต้องล็อกอิน Google)</span>
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/40 text-cyan-300">
-                    ใช้ได้ทันทีทุกโดเมน
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  วางลิงก์ Google Sheet ที่แชร์แบบ <strong className="text-slate-200">"ทุกคนที่มีลิงก์ (ผู้มีสิทธิ์อ่าน/แก้ไข)"</strong> แล้วกดดึงข้อมูลเพื่อพรีวิวและอัปเดตหน้าแดชบอร์ดได้ทันที (หากไฟล์เป็นส่วนตัว สามารถดาวน์โหลดไฟล์ <code className="text-cyan-300">.xlsx</code> จาก Google Sheets มาอัปโหลดในแท็บ "นำเข้าไฟล์จากเครื่อง" ได้เช่นกัน)
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-2">
-              <div className="relative flex-1">
-                <Link2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400" />
-                <input
-                  type="text"
-                  value={sheetInput}
-                  onChange={(e) => setSheetInput(e.target.value)}
-                  placeholder="วางลิงก์ Google Sheet เช่น https://docs.google.com/spreadsheets/d/..."
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-cyan-900/70 bg-[#091224] text-white text-xs placeholder:text-slate-500 focus:outline-hidden focus:border-cyan-400"
-                />
-              </div>
+          {safeOpenSheetUrl && (
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
               <button
                 type="button"
-                disabled={isPullingDirectLink || !sheetInput.trim()}
-                onClick={() => void handlePullFromDirectLink()}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 font-extrabold text-xs inline-flex items-center justify-center gap-2 shadow-[0_0_16px_rgba(6,182,212,0.24)] cursor-pointer transition-all disabled:opacity-50 whitespace-nowrap"
+                onClick={() => void handleCopySheetLink()}
+                className="px-3 py-2 rounded-xl border border-cyan-800/70 bg-[#091224] hover:bg-[#0D1C38] text-cyan-200 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
               >
-                {isPullingDirectLink ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                {copiedSheetUrl ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-emerald-300">คัดลอกลิงก์แล้ว</span>
+                  </>
                 ) : (
-                  <DownloadCloud className="w-4 h-4" />
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>คัดลอกลิงก์ส่งทีมงาน</span>
+                  </>
                 )}
-                <span>
-                  {isPullingDirectLink
-                    ? 'กำลังดึงและตรวจสอบข้อมูล...'
-                    : 'ดึงข้อมูลจากลิงก์มาตรวจสอบทันที'}
-                </span>
               </button>
+              <a
+                href={safeOpenSheetUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-2 rounded-xl border border-emerald-600/60 bg-emerald-950/35 hover:bg-emerald-900/45 text-emerald-200 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+                <span>เปิด Google Sheet</span>
+              </a>
             </div>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="relative flex-1">
+            <Link2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400" />
+            <input
+              type="text"
+              value={sheetInput}
+              onChange={(e) => {
+                setSheetInput(e.target.value);
+                if (metadata && extractSpreadsheetId(e.target.value) !== metadata.spreadsheetId) {
+                  setMetadata(null);
+                }
+              }}
+              placeholder="วางลิงก์ Google Sheet เช่น https://docs.google.com/spreadsheets/d/..."
+              className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-cyan-800/70 bg-[#091224] text-white text-xs placeholder:text-slate-500 focus:outline-hidden focus:border-cyan-400"
+            />
+          </div>
+          <button
+            type="button"
+            disabled={isPullingDirectLink || !sheetInput.trim()}
+            onClick={() => void handlePullFromDirectLink()}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 font-extrabold text-xs inline-flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.28)] cursor-pointer transition-all disabled:opacity-50 whitespace-nowrap"
+          >
+            {isPullingDirectLink ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <DownloadCloud className="w-4 h-4" />
+            )}
+            <span>
+              {isPullingDirectLink
+                ? 'กำลังดึงและตรวจสอบข้อมูล...'
+                : 'ดึงข้อมูลล่าสุดจากลิงก์มาอัปเดตทันที'}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* OPTIONAL: Google OAuth Workspace (for Private Sheets / Create New Sheet / Push Back to Sheet) */}
+      {!isAuthenticated ? (
+        <div className="rounded-xl p-4 sm:p-5 bg-[#060D1A]/80 border border-cyan-950 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+            <div className="space-y-0.5">
+              <div className="font-bold text-xs sm:text-sm text-slate-200">
+                {needsReauthUser
+                  ? `ยืนยันสิทธิ์เชื่อมต่อบัญชี Google (${needsReauthUser.email || needsReauthUser.displayName})`
+                  : 'โหมดเพิ่มเติม: เชื่อมต่อบัญชี Google (สำหรับชีตแบบส่วนตัว / สร้างชีตใหม่ / ส่งข้อมูลกลับลงชีต)'}
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                {needsReauthUser
+                  ? 'ระบบเก็บสิทธิ์ไว้ในหน่วยความจำชั่วคราวเท่านั้น กดปุ่มด้านขวาเพื่อเปิดใช้งานโหมดชีตส่วนตัวและเขียนกลับลงชีต'
+                  : 'ไม่จำเป็นต้องล็อกอินหากใช้ช่อง "ดึงข้อมูลจากลิงก์ Google Sheet ร่วมกรอกโดยตรง" ด้านบนแล้ว'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={isSigningIn}
+              onClick={() => void handleSignIn()}
+              className="px-4 py-2 rounded-lg bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 font-semibold text-xs inline-flex items-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-60 whitespace-nowrap"
+            >
+              {isSigningIn ? <Loader2 className="w-4 h-4 animate-spin text-blue-600" /> : <GoogleGIcon />}
+              <span>{isSigningIn ? 'กำลังเชื่อมต่อบัญชี Google...' : 'Sign in with Google · เชื่อมต่อ Google Sheets'}</span>
+            </button>
+            {needsReauthUser && (
+              <button
+                type="button"
+                onClick={() => void handleSignOut()}
+                className="px-3 py-2 rounded-lg bg-[#091224] border border-cyan-900/60 text-slate-300 hover:text-white text-xs font-medium cursor-pointer"
+              >
+                เปลี่ยนบัญชี
+              </button>
+            )}
           </div>
         </div>
       ) : (
