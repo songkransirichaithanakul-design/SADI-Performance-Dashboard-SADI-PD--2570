@@ -16,6 +16,17 @@ export interface DatabaseHealthStatus {
   updatedAt: string;
 }
 
+export interface ImportResultBanner {
+  fileName: string;
+  updatedCount: number;
+  newCount: number;
+  totalProjects: number;
+  totalBudgetActual: number;
+  importedBy: string;
+  timestamp: string;
+  affectedIds: string[];
+}
+
 interface AppContextType {
   projects: Project[];
   currentUser: AuthorizedUser;
@@ -33,6 +44,7 @@ interface AppContextType {
   offlineStatus: boolean;
   dbSyncState: 'synced' | 'syncing' | 'cached';
   dbHealth: DatabaseHealthStatus | null;
+  lastImportBanner: ImportResultBanner | null;
 
   // Actions
   setDarkMode: (value: boolean | ((prev: boolean) => boolean)) => void;
@@ -44,12 +56,17 @@ interface AppContextType {
   setSelectedStatusFilter: (filter: ProjectStatus | 'all') => void;
   setSelectedCategoryFilter: (filter: string | 'all') => void;
   setIsBulkEditMode: (value: boolean) => void;
+  clearLastImportBanner: () => void;
 
   // Data mutations (synced to Atomic File-Based DB + localStorage cache)
   refreshFromDatabase: () => Promise<void>;
   updateProject: (project: Project, changeNotes?: string) => void;
-  bulkUpdateProjects: (updatedProjects: Project[], auditNote?: string) => void;
-  importProjectsFromFile: (importedProjects: Project[], summaryNote: string) => void;
+  bulkUpdateProjects: (updatedProjects: Project[], auditNote?: string) => Promise<boolean>;
+  importProjectsFromFile: (
+    importedProjects: Project[],
+    summaryNote: string,
+    meta?: { fileName: string; updatedCount: number; newCount: number; affectedIds: string[] }
+  ) => Promise<boolean>;
   addProject: (newProject: Omit<Project, 'id'>) => void;
   deleteProject: (projectId: string) => void;
   resetAllData: () => void;
@@ -241,6 +258,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [offlineStatus, setOfflineStatus] = useState(!navigator.onLine);
   const [dbSyncState, setDbSyncState] = useState<'synced' | 'syncing' | 'cached'>('syncing');
   const [dbHealth, setDbHealth] = useState<DatabaseHealthStatus | null>(null);
+  const [lastImportBanner, setLastImportBanner] = useState<ImportResultBanner | null>(null);
+  const clearLastImportBanner = useCallback(() => setLastImportBanner(null), []);
 
   const addNotification = useCallback((notif: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => {
     const newNotif: AppNotification = {
@@ -423,22 +442,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Bulk update projects + persist atomically to File-Based DB
-  const bulkUpdateProjects = (updatedProjects: Project[], auditNote?: string) => {
+  const bulkUpdateProjects = async (updatedProjects: Project[], auditNote?: string): Promise<boolean> => {
+    const now = getFormattedNow();
     const stamped = updatedProjects.map((p) => ({
       ...p,
       lastModifiedBy: p.lastModifiedBy || currentUser.name,
-      lastModifiedAt: p.lastModifiedAt || getFormattedNow(),
+      lastModifiedAt: p.lastModifiedAt || now,
     }));
     setProjects(stamped);
     setIsBulkEditMode(false);
 
     const newLog: AuditLog = {
       id: `log-${Date.now()}`,
-      timestamp: getFormattedNow(),
+      timestamp: now,
       userName: currentUser.name,
       userRole: currentUser.role,
       projectId: 'bulk',
-      projectName: auditNote ? 'นำเข้าข้อมูลโครงการจากไฟล์ (Excel / CSV)' : 'บันทึกแก้ไขรายการแบบกลุ่ม (Bulk Edit)',
+      projectName: auditNote ? 'นำเข้าข้อมูลโครงการจากไฟล์ (Excel / CSV / JSON)' : 'บันทึกแก้ไขรายการแบบกลุ่ม (Bulk Edit)',
       actionType: 'bulk_update',
       fieldChanged: auditNote || 'แก้ไขรายการหลายรายการพร้อมกัน',
       oldValue: '-',
@@ -449,42 +469,73 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAuditLogs((prev) => [newLog, ...prev]);
     setDbSyncState('syncing');
 
-    fetch('/api/projects/bulk', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projects: stamped,
-        actorName: currentUser.name,
-        actorRole: currentUser.role,
-        auditNote,
-      }),
-    })
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Sync failed'))))
-      .then((data) => {
-        if (Array.isArray(data.projects)) setProjects(data.projects);
-        if (Array.isArray(data.auditLogs)) setAuditLogs(data.auditLogs);
-        if (data.health) setDbHealth(data.health);
-        setDbSyncState('synced');
-      })
-      .catch(() => {
-        setDbSyncState('cached');
+    let syncedToServer = false;
+    try {
+      const res = await fetch('/api/projects/bulk', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projects: stamped,
+          actorName: currentUser.name,
+          actorRole: currentUser.role,
+          auditNote,
+        }),
       });
+      if (!res.ok) throw new Error('Sync failed');
+      const data = await res.json();
+      if (Array.isArray(data.projects)) setProjects(data.projects);
+      if (Array.isArray(data.auditLogs)) setAuditLogs(data.auditLogs);
+      if (data.health) setDbHealth(data.health);
+      setDbSyncState('synced');
+      syncedToServer = true;
+    } catch {
+      setDbSyncState('cached');
+    }
 
     addNotification({
       title: auditNote ? 'นำเข้าไฟล์ข้อมูลสำเร็จ' : 'บันทึกข้อมูลแบบกลุ่มสำเร็จ',
       message: auditNote || 'บันทึกการแก้ไขรายการทั้งหมดลงฐานข้อมูลไฟล์เรียบร้อยแล้ว',
       type: 'success',
     });
+
+    return syncedToServer;
   };
 
-  // Dedicated import helper wrapping bulkUpdateProjects with clear import audit trail
-  const importProjectsFromFile = (importedProjects: Project[], summaryNote: string) => {
-    const stamped = importedProjects.map((p) => ({
-      ...p,
-      lastModifiedBy: currentUser.name,
-      lastModifiedAt: getFormattedNow(),
-    }));
-    bulkUpdateProjects(stamped, summaryNote);
+  // Dedicated import helper wrapping bulkUpdateProjects with selective stamping & instant display banner
+  const importProjectsFromFile = async (
+    importedProjects: Project[],
+    summaryNote: string,
+    meta?: { fileName: string; updatedCount: number; newCount: number; affectedIds: string[] }
+  ): Promise<boolean> => {
+    const now = getFormattedNow();
+    const affectedSet = meta?.affectedIds ? new Set(meta.affectedIds) : null;
+    const stamped = importedProjects.map((p) => {
+      if (!affectedSet || affectedSet.has(p.id)) {
+        return {
+          ...p,
+          lastModifiedBy: currentUser.name,
+          lastModifiedAt: now,
+        };
+      }
+      return p;
+    });
+
+    const ok = await bulkUpdateProjects(stamped, summaryNote);
+
+    if (meta) {
+      setLastImportBanner({
+        fileName: meta.fileName,
+        updatedCount: meta.updatedCount,
+        newCount: meta.newCount,
+        totalProjects: stamped.length,
+        totalBudgetActual: stamped.reduce((sum, p) => sum + p.budgetActual, 0),
+        importedBy: currentUser.name,
+        timestamp: now,
+        affectedIds: meta.affectedIds,
+      });
+    }
+
+    return ok;
   };
 
   // Add new project
@@ -835,6 +886,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         offlineStatus,
         dbSyncState,
         dbHealth,
+        lastImportBanner,
 
         setDarkMode,
         setLanguage,
@@ -845,6 +897,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSelectedStatusFilter,
         setSelectedCategoryFilter,
         setIsBulkEditMode,
+        clearLastImportBanner,
 
         refreshFromDatabase,
         updateProject,

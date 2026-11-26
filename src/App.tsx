@@ -29,6 +29,7 @@ const MainAppContent: React.FC = () => {
     setSelectedStatusFilter,
     setSelectedQuarterFilter,
     setSelectedCategoryFilter,
+    setSearchQuery,
   } = useApp();
 
   // Check initial URL parameters for public share deep-links (?view=public&tab=projects&quarter=Q1)
@@ -137,6 +138,20 @@ const MainAppContent: React.FC = () => {
             onGoToCatalogPage={() => {
               setIsDrilldownMode(false);
               setCurrentTab('projects');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            onImportCompleteAndDisplay={() => {
+              setSelectedFundingFilter('all');
+              setSelectedStatusFilter('all');
+              setSelectedQuarterFilter('all');
+              setSelectedCategoryFilter('all');
+              setSearchQuery('');
+              setIsDrilldownMode(false);
+              setCurrentTab('projects');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            onGoToDashboard={() => {
+              setCurrentTab('dashboard');
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
           />

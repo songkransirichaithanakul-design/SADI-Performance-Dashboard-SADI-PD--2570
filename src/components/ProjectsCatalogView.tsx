@@ -19,6 +19,9 @@ import {
   FileJson,
   Edit3,
   Layers,
+  FileCheck2,
+  BarChart3,
+  X,
 } from 'lucide-react';
 import { ProjectSearchAutocomplete } from './ProjectSearchAutocomplete';
 import { exportFullDatasetXLSX } from '../utils/spreadsheet';
@@ -50,9 +53,17 @@ export const ProjectsCatalogView: React.FC<ProjectsCatalogViewProps> = ({
     setSearchQuery,
     exportDataToCSV,
     exportDataToJSON,
+    lastImportBanner,
+    clearLastImportBanner,
   } = useApp();
 
   const [viewMode, setViewMode] = useState<'cards' | 'table'>(isDrilldownMode ? 'cards' : 'table');
+  const [showOnlyRecentlyImported, setShowOnlyRecentlyImported] = useState<boolean>(false);
+
+  const affectedImportSet = useMemo(
+    () => new Set(lastImportBanner?.affectedIds ?? []),
+    [lastImportBanner]
+  );
 
   const topScrollRef = useRef<HTMLDivElement>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
@@ -103,7 +114,10 @@ export const ProjectsCatalogView: React.FC<ProjectsCatalogViewProps> = ({
         p.category === selectedCategoryFilter ||
         normalizeCat(p.category) === normalizeCat(selectedCategoryFilter);
 
-      return matchSearch && matchFunding && matchQuarter && matchStatus && matchCategory;
+      const matchImportedOnly =
+        !showOnlyRecentlyImported || affectedImportSet.size === 0 || affectedImportSet.has(p.id);
+
+      return matchSearch && matchFunding && matchQuarter && matchStatus && matchCategory && matchImportedOnly;
     });
   }, [
     projects,
@@ -112,6 +126,8 @@ export const ProjectsCatalogView: React.FC<ProjectsCatalogViewProps> = ({
     selectedQuarterFilter,
     selectedStatusFilter,
     selectedCategoryFilter,
+    showOnlyRecentlyImported,
+    affectedImportSet,
   ]);
 
   const aggregates = useMemo(() => {
@@ -191,6 +207,66 @@ export const ProjectsCatalogView: React.FC<ProjectsCatalogViewProps> = ({
 
   return (
     <div className="space-y-5 animate-in fade-in duration-300">
+      {/* Live Post-Import Confirmation & Instant Display Banner */}
+      {lastImportBanner && (
+        <div className="bg-[#091224] border-2 border-emerald-500/60 rounded-2xl p-4 sm:p-5 shadow-[0_8px_30px_rgba(16,185,129,0.18)] flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
+              <FileCheck2 className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <div className="font-bold text-sm text-white flex items-center gap-2 flex-wrap">
+                <span>ยืนยันนำเข้าและแสดงผลข้อมูลจากไฟล์ "{lastImportBanner.fileName}" สำเร็จ</span>
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-700 text-emerald-300">
+                  {lastImportBanner.timestamp}
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 font-mono tabular-nums">
+                ผู้ส่งข้อมูล: <span className="text-cyan-300 font-sans font-semibold">{lastImportBanner.importedBy}</span> · อัปเดต {lastImportBanner.updatedCount} รายการ
+                {lastImportBanner.newCount > 0 ? ` · เพิ่มใหม่ ${lastImportBanner.newCount} รายการ` : ''} · รวมทั้งหมด {lastImportBanner.totalProjects} โครงการ · เบิกจ่ายจริงสะสม ฿{lastImportBanner.totalBudgetActual.toLocaleString()}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {lastImportBanner.affectedIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowOnlyRecentlyImported((prev) => !prev)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors cursor-pointer ${
+                  showOnlyRecentlyImported
+                    ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-bold'
+                    : 'bg-[#060D1A] border-emerald-700/70 text-emerald-300 hover:bg-emerald-950/50'
+                }`}
+              >
+                {showOnlyRecentlyImported
+                  ? `กำลังแสดงเฉพาะที่เพิ่งนำเข้า (${lastImportBanner.affectedIds.length}) · กดเพื่อดูทั้งหมด`
+                  : `กรองเฉพาะรายการที่เพิ่งนำเข้า (${lastImportBanner.affectedIds.length})`}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onBackToDashboard}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#0A1730] border border-cyan-700/70 hover:border-cyan-400 text-cyan-200 hover:text-white inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <BarChart3 className="w-3.5 h-3.5 text-cyan-400" />
+              <span>ดูกราฟบน Dashboard</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowOnlyRecentlyImported(false);
+                clearLastImportBanner();
+              }}
+              title="ปิดแถบแจ้งเตือน"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Page 1 Executive Header + Complete Dataset Export Actions */}
       <div className="bg-[#091224] border border-cyan-900/50 rounded-2xl p-5 sm:p-6 shadow-[0_8px_30px_rgba(6,182,212,0.1)] space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -494,6 +570,11 @@ export const ProjectsCatalogView: React.FC<ProjectsCatalogViewProps> = ({
                           <span className="font-mono font-bold px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800">
                             {idx + 1}. {p.code}
                           </span>
+                          {affectedImportSet.has(p.id) && (
+                            <span className="px-2 py-0.5 rounded bg-emerald-950/90 border border-emerald-600/70 text-emerald-300 text-[10px] font-bold">
+                              เพิ่งนำเข้า
+                            </span>
+                          )}
                           <span className="text-slate-400">
                             {p.fundingSource === 'budget_annual' ? 'งบประมาณแผ่นดิน' : 'เงินกองทุน สตง.'}
                           </span>
@@ -658,8 +739,14 @@ export const ProjectsCatalogView: React.FC<ProjectsCatalogViewProps> = ({
                     const remaining = p.budgetAllocated - p.budgetActual;
                     const rate = p.budgetAllocated > 0 ? (p.budgetActual / p.budgetAllocated) * 100 : 0;
 
+                    const isRecentlyImported = affectedImportSet.has(p.id);
                     return (
-                      <tr key={p.id} className="hover:bg-[#0A1730] transition-colors group">
+                      <tr
+                        key={p.id}
+                        className={`hover:bg-[#0A1730] transition-colors group ${
+                          isRecentlyImported ? 'bg-emerald-950/20' : ''
+                        }`}
+                      >
                         <td className="py-3 px-3 text-center text-slate-500 font-mono tabular-nums">
                           {idx + 1}
                         </td>
@@ -671,8 +758,13 @@ export const ProjectsCatalogView: React.FC<ProjectsCatalogViewProps> = ({
                           >
                             {p.name}
                           </button>
-                          <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                          <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400 flex-wrap">
                             <span className="font-mono text-cyan-400">{p.code}</span>
+                            {isRecentlyImported && (
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-950/90 border border-emerald-600/70 text-emerald-300 text-[10px] font-bold">
+                                เพิ่งนำเข้า
+                              </span>
+                            )}
                             <span>·</span>
                             <span className="truncate max-w-[180px]">{p.targetGroup}</span>
                           </div>

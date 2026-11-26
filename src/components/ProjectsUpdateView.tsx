@@ -28,12 +28,22 @@ import {
   FileCheck2,
   AlertTriangle,
   X,
+  FileJson,
+  Send,
+  Table2,
+  Loader2,
+  BarChart3,
+  Cloud,
 } from 'lucide-react';
 import { ProjectSearchAutocomplete } from './ProjectSearchAutocomplete';
+import { GoogleSheetsSyncPanel } from './GoogleSheetsSyncPanel';
 import {
+  IMPORT_TEMPLATE_SCHEMA,
   downloadImportTemplateXLSX,
   downloadImportTemplateCSV,
+  downloadImportTemplateJSON,
   parseImportedFile,
+  statusToTh,
   ImportParseResult,
 } from '../utils/spreadsheet';
 
@@ -42,6 +52,8 @@ interface ProjectsUpdateViewProps {
   onOpenEditModal: (project: Project) => void;
   onOpenAddModal: () => void;
   onGoToCatalogPage: () => void;
+  onImportCompleteAndDisplay?: () => void;
+  onGoToDashboard?: () => void;
 }
 
 export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
@@ -49,6 +61,8 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
   onOpenEditModal,
   onOpenAddModal,
   onGoToCatalogPage,
+  onImportCompleteAndDisplay,
+  onGoToDashboard,
 }) => {
   const {
     projects,
@@ -75,8 +89,10 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
   const [selectedStaffId, setSelectedStaffId] = useState<string>('');
 
   // Panels toggles
-  const [showGuide, setShowGuide] = useState<boolean>(true);
+  const [showGuide, setShowGuide] = useState<boolean>(false);
   const [showImportPanel, setShowImportPanel] = useState<boolean>(true);
+  const [showSchemaSpec, setShowSchemaSpec] = useState<boolean>(false);
+  const [importSourceTab, setImportSourceTab] = useState<'google_sheets' | 'local_file'>('google_sheets');
 
   // Import state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +101,8 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
   const [importSuccessMessage, setImportSuccessMessage] = useState<string | null>(null);
   const [includeNewProjectsOnImport, setIncludeNewProjectsOnImport] = useState<boolean>(true);
   const [isParsingFile, setIsParsingFile] = useState<boolean>(false);
+  const [isSubmittingImport, setIsSubmittingImport] = useState<boolean>(false);
+  const [isDraggingFile, setIsDraggingFile] = useState<boolean>(false);
 
   // Refs for synced top & bottom horizontal scrollbars
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -235,6 +253,38 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
     }
   };
 
+  // Compute live projected KPI summary before confirming import
+  const importProjectedSummary = useMemo(() => {
+    if (!importPreview) return null;
+    const existingMap = new Map(projects.map((p) => [p.id, p]));
+    const newAdditions: Project[] = [];
+
+    importPreview.rows.forEach((row) => {
+      if (row.isNew) {
+        if (includeNewProjectsOnImport) {
+          newAdditions.push(row.updatedProject);
+        }
+      } else if (row.matchedProject) {
+        existingMap.set(row.matchedProject.id, row.updatedProject);
+      }
+    });
+
+    const merged = [...newAdditions, ...Array.from(existingMap.values())];
+    const currentActual = projects.reduce((s, p) => s + p.budgetActual, 0);
+    const totalAllocated = merged.reduce((s, p) => s + p.budgetAllocated, 0);
+    const totalActual = merged.reduce((s, p) => s + p.budgetActual, 0);
+    const disbursementRate = totalAllocated > 0 ? (totalActual / totalAllocated) * 100 : 0;
+
+    return {
+      totalProjects: merged.length,
+      totalAllocated,
+      totalActual,
+      deltaActual: totalActual - currentActual,
+      disbursementRate,
+      effectiveNewCount: includeNewProjectsOnImport ? importPreview.newCount : 0,
+    };
+  }, [importPreview, projects, includeNewProjectsOnImport]);
+
   // File upload handler (Excel / CSV / JSON)
   const handleFileSelected = async (file: File | undefined) => {
     if (!file) return;
@@ -260,34 +310,70 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
     }
   };
 
-  const handleConfirmImport = () => {
-    if (!importPreview) return;
+  const handleDropFile = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+    const droppedFile = e.dataTransfer.files?.[0];
+    if (droppedFile) {
+      void handleFileSelected(droppedFile);
+    }
+  };
 
-    const existingMap = new Map(projects.map((p) => [p.id, p]));
-    const newAdditions: Project[] = [];
+  const handleConfirmImport = async (navigateToDisplayImmediately: boolean) => {
+    if (!importPreview || isSubmittingImport) return;
+    setIsSubmittingImport(true);
+    setImportError(null);
 
-    importPreview.rows.forEach((row) => {
-      if (row.isNew) {
-        if (includeNewProjectsOnImport) {
-          newAdditions.push(row.updatedProject);
+    try {
+      const existingMap = new Map(projects.map((p) => [p.id, p]));
+      const newAdditions: Project[] = [];
+      const affectedIds: string[] = [];
+
+      importPreview.rows.forEach((row) => {
+        if (row.isNew) {
+          if (includeNewProjectsOnImport) {
+            newAdditions.push(row.updatedProject);
+            affectedIds.push(row.updatedProject.id);
+          }
+        } else if (row.matchedProject) {
+          existingMap.set(row.matchedProject.id, row.updatedProject);
+          if (row.hasChanges) {
+            affectedIds.push(row.matchedProject.id);
+          }
         }
-      } else if (row.matchedProject) {
-        existingMap.set(row.matchedProject.id, row.updatedProject);
+      });
+
+      const mergedProjects = [...newAdditions, ...Array.from(existingMap.values())];
+      const effectiveNewCount = includeNewProjectsOnImport ? importPreview.newCount : 0;
+      const isGoogleSheetSource = importPreview.fileName.startsWith('Google Sheet:');
+      const summaryNote = `${isGoogleSheetSource ? 'ซิงก์ข้อมูลจาก' : 'นำเข้าจากไฟล์'} "${importPreview.fileName}" (อัปเดต ${importPreview.updatesCount} โครงการ${
+        effectiveNewCount > 0 ? `, เพิ่มใหม่ ${effectiveNewCount} โครงการ` : ''
+      })`;
+
+      await importProjectsFromFile(mergedProjects, summaryNote, {
+        fileName: importPreview.fileName,
+        updatedCount: importPreview.updatesCount,
+        newCount: effectiveNewCount,
+        affectedIds: affectedIds.length > 0 ? affectedIds : importPreview.rows.map((r) => r.updatedProject.id),
+      });
+
+      setImportPreview(null);
+
+      if (navigateToDisplayImmediately && onImportCompleteAndDisplay) {
+        onImportCompleteAndDisplay();
+      } else {
+        setImportSuccessMessage(
+          `ยืนยันส่งและบันทึกข้อมูลจาก "${importPreview.fileName}" สำเร็จ (${importPreview.updatesCount} โครงการเดิม${
+            effectiveNewCount > 0 ? ` และเพิ่มใหม่ ${effectiveNewCount} โครงการ` : ''
+          }) แสดงผลในระบบเรียบร้อยแล้ว`
+        );
       }
-    });
-
-    const mergedProjects = [...newAdditions, ...Array.from(existingMap.values())];
-    const summaryNote = `นำเข้าจากไฟล์ "${importPreview.fileName}" (อัปเดต ${importPreview.updatesCount} โครงการ${
-      includeNewProjectsOnImport && importPreview.newCount > 0 ? `, เพิ่มใหม่ ${importPreview.newCount} โครงการ` : ''
-    })`;
-
-    importProjectsFromFile(mergedProjects, summaryNote);
-    setImportSuccessMessage(
-      `บันทึกข้อมูลจากไฟล์ "${importPreview.fileName}" สำเร็จ (${importPreview.updatesCount} โครงการเดิม${
-        includeNewProjectsOnImport && importPreview.newCount > 0 ? ` และเพิ่มใหม่ ${importPreview.newCount} โครงการ` : ''
-      }) ข้อมูลถูกอัปเดตไปที่หน้าข้อมูลโครงการเรียบร้อยแล้ว`
-    );
-    setImportPreview(null);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างบันทึกข้อมูลนำเข้า');
+    } finally {
+      setIsSubmittingImport(false);
+    }
   };
 
   // STEP 1: Display the 39-Person SADI Staff Updater Selector Box BEFORE unlocking edit/import tools
@@ -336,8 +422,8 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
               <div className="flex items-start gap-2.5">
                 <span className="w-6 h-6 rounded-full bg-blue-500/20 border border-blue-500/40 text-blue-300 font-mono font-bold flex items-center justify-center shrink-0">2</span>
                 <div>
-                  <div className="font-semibold text-white">แก้ไขตรง หรือนำเข้าไฟล์ Excel / CSV</div>
-                  <p className="text-slate-400 text-[11px] mt-0.5">ปรับปรุงในตารางหรือดาวน์โหลดไฟล์ตัวอย่างกรอกแล้วอัปโหลดเข้าสู่ระบบ</p>
+                  <div className="font-semibold text-white">แก้ไขตรง · Google Sheets ออนไลน์ · หรือนำเข้าไฟล์</div>
+                  <p className="text-slate-400 text-[11px] mt-0.5">ร่วมกรอกผ่าน Google Sheets ออนไลน์ หรือนำเข้าไฟล์ Excel / CSV / JSON ตามโครงสร้างมาตรฐาน</p>
                 </div>
               </div>
               <div className="flex items-start gap-2.5">
@@ -448,7 +534,7 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
               <span className="font-bold text-sm text-white">{currentUser.name}</span>
             </div>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              หน้าปรับปรุงข้อมูลโครงการ — รองรับการแก้ไขในตารางและการนำเข้าไฟล์ Excel (.xlsx / .xls) หรือ CSV
+              หน้าปรับปรุงข้อมูลโครงการ — รองรับการเชื่อมต่อ Google Sheets ออนไลน์, แก้ไขในตาราง และนำเข้าไฟล์ Excel / CSV / JSON
             </p>
           </div>
         </div>
@@ -463,8 +549,8 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
                 : 'bg-[#0C1B38] border-cyan-800/60 text-cyan-200 hover:bg-[#10244C]'
             }`}
           >
-            <Upload className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{showImportPanel ? 'ซ่อนส่วนนำเข้าไฟล์' : 'นำเข้าไฟล์ Excel / CSV'}</span>
+            <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{showImportPanel ? 'ซ่อนส่วนซิงก์/นำเข้าข้อมูล' : 'Google Sheets / นำเข้าไฟล์'}</span>
           </button>
 
           <button
@@ -509,17 +595,18 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
       {/* File Import & Sample Templates Panel */}
       {showImportPanel && (
         <div className="bg-[#091224] border border-emerald-800/50 rounded-2xl p-5 sm:p-6 shadow-[0_8px_30px_rgba(16,185,129,0.08)] space-y-5">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-cyan-950 pb-4">
+          {/* Top Header + Template Download Buttons */}
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-cyan-950 pb-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
                 <FileSpreadsheet className="w-5 h-5" />
               </div>
               <div>
                 <h3 className="font-bold text-sm sm:text-base text-white">
-                  นำเข้าข้อมูลจากไฟล์ Excel / CSV และดาวน์โหลดไฟล์ตัวอย่างมาตรฐาน
+                  ซิงก์ Google Sheets ออนไลน์ หรือนำเข้าไฟล์ข้อมูลตามโครงสร้างมาตรฐาน (16 คอลัมน์)
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  รองรับไฟล์ .xlsx, .xls, .csv (UTF-8) และ .json — ระบบตรวจสอบรหัสโครงการและประมวลผลให้อัตโนมัติก่อนบันทึก
+                  เชื่อมต่อ Google Sheets แบบส่วนตัวให้ทีมงานช่วยกันกรอกออนไลน์ หรือนำเข้าไฟล์ Excel / CSV / JSON แล้วกดยืนยันส่งเพื่อแสดงผลทันที
                 </p>
               </div>
             </div>
@@ -532,7 +619,7 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
                 className="px-3.5 py-2 rounded-xl text-xs font-bold border border-emerald-600/60 bg-emerald-950/40 hover:bg-emerald-500/20 text-emerald-200 flex items-center gap-1.5 cursor-pointer transition-colors"
               >
                 <Download className="w-3.5 h-3.5 text-emerald-400" />
-                <span>ดาวน์โหลดไฟล์ตัวอย่าง Excel (.XLSX)</span>
+                <span>ไฟล์โครงสร้าง Excel (.XLSX)</span>
               </button>
               <button
                 type="button"
@@ -540,50 +627,217 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
                 className="px-3.5 py-2 rounded-xl text-xs font-semibold border border-cyan-800/70 bg-[#060D1A] hover:bg-[#0A1730] text-cyan-200 flex items-center gap-1.5 cursor-pointer transition-colors"
               >
                 <Download className="w-3.5 h-3.5 text-cyan-400" />
-                <span>ดาวน์โหลดไฟล์ตัวอย่าง CSV (.CSV)</span>
+                <span>ไฟล์โครงสร้าง CSV (.CSV)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadImportTemplateJSON(projects)}
+                className="px-3 py-2 rounded-xl text-xs font-semibold border border-cyan-900/70 bg-[#060D1A] hover:bg-[#0A1730] text-slate-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <FileJson className="w-3.5 h-3.5 text-cyan-400" />
+                <span>JSON</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowSchemaSpec(!showSchemaSpec)}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  showSchemaSpec
+                    ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-200'
+                    : 'bg-[#060D1A] border-cyan-900/60 text-slate-300 hover:text-white'
+                }`}
+              >
+                <Table2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>{showSchemaSpec ? 'ซ่อนโครงสร้างคอลัมน์' : 'ดูโครงสร้างคอลัมน์ (16)'}</span>
               </button>
             </div>
           </div>
 
-          {/* Template Schema Hint + Upload Trigger */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
-            {/* Upload Box */}
-            <div className="lg:col-span-2 bg-[#060D1A] border border-dashed border-cyan-700/70 hover:border-cyan-400 rounded-xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4 transition-colors">
-              <div className="space-y-1 text-center sm:text-left">
-                <div className="font-semibold text-sm text-white">
-                  เลือกไฟล์ข้อมูลเพื่อนำเข้าสู่ระบบ (.xlsx, .xls, .csv, .json)
-                </div>
-                <p className="text-xs text-slate-400">
-                  แนะนำให้ดาวน์โหลดไฟล์ตัวอย่างด้านบน แก้ไขเฉพาะช่องสถานะ/จำนวนรุ่น/ผู้เข้าอบรม/งบใช้จ่ายจริง แล้วอัปโหลดกลับที่นี่
-                </p>
-              </div>
-              <div className="shrink-0">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".xlsx,.xls,.csv,.json"
-                  onChange={(e) => void handleFileSelected(e.target.files?.[0])}
-                  className="hidden"
-                  id="sadi-file-import-input"
-                />
-                <label
-                  htmlFor="sadi-file-import-input"
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 font-bold text-xs inline-flex items-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.25)] cursor-pointer transition-all"
-                >
-                  <Upload className="w-4 h-4" />
-                  <span>{isParsingFile ? 'กำลังอ่านไฟล์...' : 'เลือกไฟล์นำเข้าข้อมูล'}</span>
-                </label>
-              </div>
-            </div>
-
-            {/* Template Column Summary */}
-            <div className="bg-[#060D1A] border border-cyan-950 rounded-xl p-4 text-xs space-y-1.5">
-              <div className="font-bold text-cyan-300">คอลัมน์สำคัญในไฟล์ตัวอย่าง</div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                ใช้ <span className="text-white font-mono">รหัสโครงการ</span> (เช่น GOV-70-01) จับคู่โครงการอัตโนมัติ พร้อมฟิลด์ <span className="text-white">สถานะโครงการ, ดำเนินการจริง, จำนวนรุ่นจริง, คนเข้าอบรมจริง, งบใช้จ่ายจริง (บาท)</span>
-              </p>
-            </div>
+          {/* Mode Tabs: Online Google Sheets vs Local File Upload */}
+          <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl bg-[#060D1A] border border-cyan-950 w-fit">
+            <button
+              type="button"
+              onClick={() => {
+                setImportSourceTab('google_sheets');
+                setImportError(null);
+              }}
+              className={`px-4 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-2 transition-all cursor-pointer ${
+                importSourceTab === 'google_sheets'
+                  ? 'bg-gradient-to-r from-emerald-500/25 to-cyan-500/25 border border-emerald-500/60 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white border border-transparent'
+              }`}
+            >
+              <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Google Sheets ออนไลน์ (ร่วมกันกรอก)</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold">
+                Google Login
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setImportSourceTab('local_file');
+                setImportError(null);
+              }}
+              className={`px-4 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-2 transition-all cursor-pointer ${
+                importSourceTab === 'local_file'
+                  ? 'bg-gradient-to-r from-cyan-500/25 to-blue-500/25 border border-cyan-500/60 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white border border-transparent'
+              }`}
+            >
+              <Upload className="w-3.5 h-3.5 text-cyan-400" />
+              <span>นำเข้าไฟล์จากเครื่อง (Excel / CSV / JSON)</span>
+            </button>
           </div>
+
+          {/* Collapsible Standard 16-Column Schema Table */}
+          {showSchemaSpec && (
+            <div className="bg-[#060D1A] border border-cyan-900/60 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-bold text-xs sm:text-sm text-cyan-300">
+                    โครงสร้างคอลัมน์มาตรฐานที่ระบบออกแบบไว้ (16 คอลัมน์)
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    รองรับทั้ง Google Sheets ออนไลน์, ไฟล์ที่ดาวน์โหลดจากไฟล์ตัวอย่าง หรือไฟล์ที่ส่งออกจากหน้า "ข้อมูลโครงการ" (ระบบแปลงตัวเลขไทยเป็นอาราบิกให้อัตโนมัติ)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSchemaSpec(false)}
+                  className="text-slate-400 hover:text-white p-1 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="max-h-60 overflow-y-auto prominent-scrollbar rounded-lg border border-cyan-950">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#091224] text-cyan-200 sticky top-0">
+                    <tr>
+                      <th className="py-2 px-2.5 font-mono w-12 text-center">#</th>
+                      <th className="py-2 px-2.5">ชื่อคอลัมน์มาตรฐาน</th>
+                      <th className="py-2 px-2.5 w-20 text-center">เงื่อนไข</th>
+                      <th className="py-2 px-2.5">ตัวอย่างข้อมูล</th>
+                      <th className="py-2 px-2.5">คำอธิบาย / รูปแบบที่รองรับ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-cyan-950/60">
+                    {IMPORT_TEMPLATE_SCHEMA.map((col) => (
+                      <tr key={col.order} className="hover:bg-[#0A1730]/60">
+                        <td className="py-1.5 px-2.5 text-center font-mono text-slate-500">{col.order}</td>
+                        <td className="py-1.5 px-2.5 font-semibold text-white whitespace-nowrap">{col.columnName}</td>
+                        <td className="py-1.5 px-2.5 text-center">
+                          {col.required ? (
+                            <span className="px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-700/70 text-cyan-300 text-[10px] font-semibold">
+                              สำคัญ
+                            </span>
+                          ) : (
+                            <span className="text-slate-500 text-[10px]">เพิ่มเติม</span>
+                          )}
+                        </td>
+                        <td className="py-1.5 px-2.5 font-mono text-[11px] text-emerald-300/90 whitespace-nowrap">{col.example}</td>
+                        <td className="py-1.5 px-2.5 text-[11px] text-slate-300">{col.description}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {importSourceTab === 'google_sheets' ? (
+            <GoogleSheetsSyncPanel
+              projects={projects}
+              onParsedResult={(result) => {
+                setImportError(null);
+                setImportSuccessMessage(null);
+                setImportPreview(result);
+              }}
+              onError={(msg) => {
+                if (msg) setImportPreview(null);
+                setImportError(msg);
+              }}
+            />
+          ) : (
+            <div className="space-y-4">
+              {/* 3-Step External Record -> Upload -> Confirm & Display Flow */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                <div className="bg-[#060D1A] border border-cyan-950 rounded-xl p-3.5 flex items-start gap-2.5">
+                  <span className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-mono font-bold flex items-center justify-center shrink-0">1</span>
+                  <div>
+                    <div className="font-semibold text-white">บันทึกข้อมูลภายนอกตามโครงสร้าง</div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">ดาวน์โหลดไฟล์โครงสร้าง Excel / CSV / JSON ด้านบน แล้วกรอกหรือแก้ไขข้อมูลในเครื่องของท่าน</p>
+                  </div>
+                </div>
+                <div className="bg-[#060D1A] border border-cyan-950 rounded-xl p-3.5 flex items-start gap-2.5">
+                  <span className="w-6 h-6 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-mono font-bold flex items-center justify-center shrink-0">2</span>
+                  <div>
+                    <div className="font-semibold text-white">อัปโหลดไฟล์และตรวจสอบพรีวิว</div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">ลากวางหรือเลือกไฟล์ที่บันทึกแล้ว ระบบตรวจสอบโครงสร้าง รหัสโครงการ และสรุปยอดงบให้ทันที</p>
+                  </div>
+                </div>
+                <div className="bg-[#060D1A] border border-cyan-950 rounded-xl p-3.5 flex items-start gap-2.5">
+                  <span className="w-6 h-6 rounded-full bg-blue-500/20 border border-blue-500/40 text-blue-300 font-mono font-bold flex items-center justify-center shrink-0">3</span>
+                  <div>
+                    <div className="font-semibold text-white">กดยืนยันส่งและแสดงผลทันที</div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">กดปุ่ม "ยืนยันส่งและแสดงผลข้อมูลทันที" ระบบบันทึกลงฐานข้อมูลและเปิดแสดงผลทันที</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Drag & Drop Upload Zone */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsDraggingFile(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsDraggingFile(false);
+                }}
+                onDrop={handleDropFile}
+                className={`rounded-xl p-5 border-2 border-dashed flex flex-col sm:flex-row items-center justify-between gap-4 transition-all ${
+                  isDraggingFile
+                    ? 'bg-cyan-950/40 border-cyan-400 shadow-[0_0_25px_rgba(6,182,212,0.2)]'
+                    : 'bg-[#060D1A] border-cyan-700/70 hover:border-cyan-400'
+                }`}
+              >
+                <div className="flex items-center gap-3.5 text-center sm:text-left">
+                  <div className="w-11 h-11 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0 hidden sm:flex">
+                    <Upload className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="font-semibold text-sm text-white">
+                      {isDraggingFile
+                        ? 'ปล่อยไฟล์ที่นี่เพื่อตรวจสอบโครงสร้างและนำเข้าข้อมูล...'
+                        : 'ลากไฟล์มาวางที่นี่ หรือเลือกไฟล์ข้อมูลที่บันทึกภายนอก (.xlsx, .xls, .csv, .json)'}
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      จับคู่ด้วย <span className="text-cyan-300 font-mono">รหัสโครงการ</span> อัตโนมัติ · รองรับทั้งการอัปเดตโครงการเดิมและการเพิ่มโครงการใหม่
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv,.json"
+                    onChange={(e) => void handleFileSelected(e.target.files?.[0])}
+                    className="hidden"
+                    id="sadi-file-import-input"
+                  />
+                  <label
+                    htmlFor="sadi-file-import-input"
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 font-bold text-xs inline-flex items-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.25)] cursor-pointer transition-all whitespace-nowrap"
+                  >
+                    {isParsingFile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                    <span>{isParsingFile ? 'กำลังอ่านและตรวจสอบไฟล์...' : 'เลือกไฟล์นำเข้าข้อมูล'}</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Import Error Alert */}
           {importError && (
@@ -598,102 +852,215 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
             </div>
           )}
 
-          {/* Import Success Alert */}
+          {/* Import Success Alert (when staying on Update page) */}
           {importSuccessMessage && (
             <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-700 text-emerald-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <FileCheck2 className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>{importSuccessMessage}</span>
               </div>
-              <button
-                type="button"
-                onClick={onGoToCatalogPage}
-                className="px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold text-xs inline-flex items-center gap-1 cursor-pointer shrink-0"
-              >
-                <span>เปิดดูหน้าข้อมูลโครงการ</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {onGoToDashboard && (
+                  <button
+                    type="button"
+                    onClick={onGoToDashboard}
+                    className="px-3 py-1.5 rounded-lg bg-[#0A1730] border border-cyan-700 text-cyan-200 hover:text-white font-semibold text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <BarChart3 className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>ดูกราฟ Dashboard</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onGoToCatalogPage}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <span>เปิดดูหน้าข้อมูลโครงการ</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           )}
 
-          {/* Import Preview Panel before committing to DB */}
-          {importPreview && (
-            <div className="p-4 rounded-xl bg-[#060D1A] border border-cyan-600/60 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cyan-950 pb-3">
+          {/* Import Preview & Confirm-Send-and-Display Panel */}
+          {importPreview && importProjectedSummary && (
+            <div className="p-4 sm:p-5 rounded-xl bg-[#060D1A] border-2 border-cyan-500/70 shadow-[0_0_30px_rgba(6,182,212,0.12)] space-y-4">
+              {/* Preview Header */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-cyan-950 pb-4">
                 <div>
-                  <div className="font-bold text-sm text-white flex items-center gap-2">
-                    <FileCheck2 className="w-4 h-4 text-cyan-400" />
-                    <span>ตรวจสอบข้อมูลก่อนบันทึกจากไฟล์: {importPreview.fileName}</span>
+                  <div className="font-bold text-sm sm:text-base text-white flex items-center gap-2 flex-wrap">
+                    <FileCheck2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                    <span>พร้อมส่งข้อมูลจาก: {importPreview.fileName}</span>
+                    <span className="text-[11px] font-mono font-normal px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800 text-cyan-300">
+                      ชีต: {importPreview.sheetName}
+                    </span>
                   </div>
                   <div className="text-xs text-slate-400 mt-1 font-mono tabular-nums">
-                    อ่านได้ {importPreview.totalRows} แถว · อัปเดตโครงการเดิม {importPreview.updatesCount} รายการ · โครงการใหม่ {importPreview.newCount} รายการ
+                    ตรวจสอบโครงสร้างผ่านแล้ว · อ่านได้ {importPreview.totalRows} แถว · อัปเดตโครงการเดิม {importPreview.updatesCount} รายการ (มีการเปลี่ยนแปลง {importPreview.changedUpdatesCount}) · โครงการใหม่ {importPreview.newCount} รายการ
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {importPreview.newCount > 0 && (
-                    <label className="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer mr-2">
-                      <input
-                        type="checkbox"
-                        checked={includeNewProjectsOnImport}
-                        onChange={(e) => setIncludeNewProjectsOnImport(e.target.checked)}
-                        className="accent-cyan-400"
-                      />
-                      <span>เพิ่มโครงการใหม่ ({importPreview.newCount}) เข้าสู่ระบบด้วย</span>
-                    </label>
-                  )}
+                {importPreview.newCount > 0 && (
+                  <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#091224] border border-cyan-900/60 text-xs text-slate-200 cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={includeNewProjectsOnImport}
+                      onChange={(e) => setIncludeNewProjectsOnImport(e.target.checked)}
+                      className="accent-cyan-400"
+                    />
+                    <span>รวมโครงการใหม่ ({importPreview.newCount} รายการ) เข้าสู่ระบบ</span>
+                  </label>
+                )}
+              </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setImportPreview(null)}
-                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
-                  >
-                    ยกเลิก
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmImport}
-                    className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-md"
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    <span>ยืนยันนำเข้าและบันทึกลงฐานข้อมูล</span>
-                  </button>
+              {/* Projected Post-Import KPI Summary Strip */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs font-mono tabular-nums">
+                <div className="p-3 rounded-xl bg-[#091224] border border-cyan-950">
+                  <span className="text-[11px] text-slate-400 font-sans block">โครงการรวมหลังนำเข้า</span>
+                  <span className="text-sm font-bold text-white">
+                    {importProjectedSummary.totalProjects} โครงการ
+                    {importProjectedSummary.effectiveNewCount > 0 && (
+                      <span className="text-emerald-400 ml-1">(+{importProjectedSummary.effectiveNewCount})</span>
+                    )}
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-[#091224] border border-cyan-950">
+                  <span className="text-[11px] text-slate-400 font-sans block">งบจัดสรรรวม</span>
+                  <span className="text-sm font-bold text-white">
+                    ฿{importProjectedSummary.totalAllocated.toLocaleString()}
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-[#091224] border border-cyan-950">
+                  <span className="text-[11px] text-slate-400 font-sans block">เบิกจ่ายจริงรวมหลังนำเข้า</span>
+                  <span className="text-sm font-bold text-cyan-300">
+                    ฿{importProjectedSummary.totalActual.toLocaleString()}
+                  </span>
+                  {importProjectedSummary.deltaActual !== 0 && (
+                    <span className={`block text-[10px] ${importProjectedSummary.deltaActual > 0 ? 'text-emerald-400' : 'text-amber-300'}`}>
+                      {importProjectedSummary.deltaActual > 0 ? '+' : ''}฿{importProjectedSummary.deltaActual.toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                <div className="p-3 rounded-xl bg-[#091224] border border-cyan-950">
+                  <span className="text-[11px] text-slate-400 font-sans block">อัตราเบิกจ่ายใหม่</span>
+                  <span className="text-sm font-bold text-emerald-400">
+                    {importProjectedSummary.disbursementRate.toFixed(2)}%
+                  </span>
                 </div>
               </div>
 
-              <div className="max-h-56 overflow-y-auto prominent-scrollbar">
+              {/* Warnings if any */}
+              {importPreview.warnings.length > 0 && (
+                <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-800/50 text-amber-200 text-[11px] space-y-1">
+                  <div className="font-semibold">หมายเหตุการอ่านไฟล์ ({importPreview.warnings.length} รายการ):</div>
+                  <ul className="list-disc list-inside text-amber-300/90 space-y-0.5">
+                    {importPreview.warnings.slice(0, 5).map((w, i) => (
+                      <li key={i}>{w}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Row-by-Row Verification Table */}
+              <div className="max-h-64 overflow-y-auto prominent-scrollbar rounded-lg border border-cyan-950">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-[#091224] text-cyan-300 sticky top-0">
                     <tr>
-                      <th className="py-2 px-2 font-mono">แถว</th>
-                      <th className="py-2 px-2 font-mono">รหัส</th>
-                      <th className="py-2 px-2">ชื่อโครงการ</th>
-                      <th className="py-2 px-2">ประเภทการประมวลผล</th>
-                      <th className="py-2 px-2 text-right font-mono">ใช้จ่ายจริงใหม่</th>
+                      <th className="py-2 px-2.5 font-mono">แถว</th>
+                      <th className="py-2 px-2.5 font-mono">รหัส</th>
+                      <th className="py-2 px-2.5">ชื่อโครงการ</th>
+                      <th className="py-2 px-2.5">สถานะใหม่</th>
+                      <th className="py-2 px-2.5">รายละเอียดการเปลี่ยนแปลง</th>
+                      <th className="py-2 px-2.5 text-right font-mono">รุ่น / คนจริง</th>
+                      <th className="py-2 px-2.5 text-right font-mono">ใช้จ่ายจริงใหม่</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-cyan-950/60">
                     {importPreview.rows.map((r) => (
-                      <tr key={r.rowNumber}>
-                        <td className="py-2 px-2 font-mono text-slate-500">{r.rowNumber}</td>
-                        <td className="py-2 px-2 font-mono text-cyan-300">{r.code}</td>
-                        <td className="py-2 px-2 text-white max-w-xs truncate">{r.name}</td>
-                        <td className="py-2 px-2 text-[11px]">
+                      <tr
+                        key={r.rowNumber}
+                        className={
+                          r.isNew
+                            ? 'bg-emerald-950/20'
+                            : r.hasChanges
+                            ? 'bg-cyan-950/20'
+                            : ''
+                        }
+                      >
+                        <td className="py-2 px-2.5 font-mono text-slate-500">{r.rowNumber}</td>
+                        <td className="py-2 px-2.5 font-mono text-cyan-300 whitespace-nowrap">{r.code}</td>
+                        <td className="py-2 px-2.5 text-white max-w-xs truncate">{r.name}</td>
+                        <td className="py-2 px-2.5 whitespace-nowrap">
+                          <span
+                            className={`text-[11px] font-semibold ${
+                              r.updatedProject.status === 'completed'
+                                ? 'text-emerald-400'
+                                : r.updatedProject.status === 'in_progress'
+                                ? 'text-cyan-300'
+                                : 'text-amber-300'
+                            }`}
+                          >
+                            {statusToTh(r.updatedProject.status)}
+                          </span>
+                        </td>
+                        <td className="py-2 px-2.5 text-[11px]">
                           {r.isNew ? (
                             <span className="text-emerald-400 font-semibold">+ โครงการใหม่</span>
                           ) : r.changedSummary.length > 0 ? (
-                            <span className="text-cyan-300">{r.changedSummary.join(', ')}</span>
+                            <span className="text-cyan-300">{r.changedSummary.join(' · ')}</span>
                           ) : (
-                            <span className="text-slate-500">ข้อมูลเหมือนเดิม / อัปเดตรอบล่าสุด</span>
+                            <span className="text-slate-500">ข้อมูลเหมือนเดิม</span>
                           )}
                         </td>
-                        <td className="py-2 px-2 text-right font-mono text-white tabular-nums">
+                        <td className="py-2 px-2.5 text-right font-mono text-slate-300 tabular-nums whitespace-nowrap">
+                          {r.updatedProject.batchesActual} รุ่น / {r.updatedProject.participantsActual.toLocaleString()} คน
+                        </td>
+                        <td className="py-2 px-2.5 text-right font-mono text-white font-semibold tabular-nums whitespace-nowrap">
                           ฿{r.updatedProject.budgetActual.toLocaleString()}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Action Bar: Confirm Send & Display Immediately */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-cyan-950">
+                <div className="text-[11px] text-slate-400">
+                  ผู้ส่งข้อมูล: <span className="text-cyan-300 font-semibold">{currentUser.name}</span> · บันทึกลงฐานข้อมูลไฟล์เซิร์ฟเวอร์พร้อมสำรองอัตโนมัติ
+                </div>
+                <div className="flex flex-wrap items-center gap-2 justify-end">
+                  <button
+                    type="button"
+                    disabled={isSubmittingImport}
+                    onClick={() => setImportPreview(null)}
+                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSubmittingImport}
+                    onClick={() => void handleConfirmImport(false)}
+                    className="px-4 py-2 rounded-xl border border-cyan-700/70 bg-[#0A1730] hover:bg-[#0E2248] text-cyan-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>ยืนยันบันทึกและอยู่หน้านี้ต่อ</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSubmittingImport}
+                    onClick={() => void handleConfirmImport(true)}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 hover:from-emerald-300 hover:to-cyan-300 text-slate-950 text-xs font-extrabold flex items-center gap-2 cursor-pointer shadow-[0_0_24px_rgba(16,185,129,0.35)] disabled:opacity-50"
+                  >
+                    {isSubmittingImport ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4" />
+                    )}
+                    <span>{isSubmittingImport ? 'กำลังบันทึกและแสดงผล...' : 'ยืนยันส่งและแสดงผลข้อมูลทันที'}</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
