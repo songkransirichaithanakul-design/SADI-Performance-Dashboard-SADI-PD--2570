@@ -8,11 +8,8 @@ import {
   History,
   Share2,
   PlusCircle,
-  Bell,
   PanelLeftClose,
   PanelLeftOpen,
-  ShieldCheck,
-  Lock,
 } from 'lucide-react';
 
 export type NavTab = 'dashboard' | 'timeline' | 'projects' | 'update' | 'admin';
@@ -24,8 +21,6 @@ interface LeftSidebarProps {
   onToggleCollapse: () => void;
   onOpenShareModal: () => void;
   onOpenAddModal: () => void;
-  onOpenNotifications: () => void;
-  onOpenUserModal: () => void;
   isPublicView?: boolean;
 }
 
@@ -36,14 +31,11 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
   onToggleCollapse,
   onOpenShareModal,
   onOpenAddModal,
-  onOpenNotifications,
-  onOpenUserModal,
   isPublicView = false,
 }) => {
-  const { projects, currentUser, notifications } = useApp();
+  const { projects, currentUser } = useApp();
 
   const isAdmin = currentUser.role === 'admin' && !isPublicView;
-  const unreadCount = notifications.filter((n) => !n.read).length;
 
   const stats = useMemo(() => {
     const total = projects.length;
@@ -98,7 +90,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
   return (
     <aside
       aria-label="แถบเครื่องมือด้านซ้าย"
-      className={`hidden lg:flex flex-col shrink-0 sticky top-16 h-[calc(100vh-4rem)] bg-[#060D1A] border-r border-cyan-950/80 text-slate-100 shadow-[4px_0_24px_rgba(4,9,20,0.45)] transition-[width] duration-200 ease-out z-30 ${
+      className={`hidden lg:flex flex-col shrink-0 sticky top-16 h-[calc(100vh-4rem)] bg-[#060D1A] border-r border-cyan-950/80 text-slate-100 shadow-[4px_0_24px_rgba(4,9,20,0.45)] z-30 ${
         collapsed ? 'w-[74px]' : 'w-60'
       }`}
     >
@@ -201,51 +193,6 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
             {!collapsed && <span className="truncate">เพิ่มโครงการใหม่</span>}
           </button>
         )}
-
-        <button
-          onClick={onOpenNotifications}
-          title={collapsed ? 'การแจ้งเตือน' : undefined}
-          className={`relative w-full flex items-center rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap border border-transparent hover:bg-[#0A1730] text-slate-300 hover:text-white ${
-            collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2.5 gap-2.5'
-          }`}
-        >
-          <span className="flex items-center gap-2.5 min-w-0">
-            <Bell className="w-4 h-4 text-cyan-400 shrink-0" />
-            {!collapsed && <span className="truncate">การแจ้งเตือน</span>}
-          </span>
-          {unreadCount > 0 && (
-            <span
-              className={`font-mono tabular-nums text-[11px] font-semibold text-cyan-300 ${
-                collapsed ? 'absolute top-1.5 right-2 text-[10px]' : ''
-              }`}
-            >
-              {unreadCount}
-            </span>
-          )}
-        </button>
-
-        {!isPublicView && (
-          <button
-            onClick={onOpenUserModal}
-            title={collapsed ? (isAdmin ? 'จัดการเซสชัน Admin' : 'เข้าสู่ระบบ Admin') : undefined}
-            className={`w-full flex items-center rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap border ${
-              collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5 gap-2.5'
-            } ${
-              isAdmin
-                ? 'border-cyan-500/50 bg-cyan-950/50 text-cyan-300'
-                : 'border-transparent hover:bg-[#0A1730] text-slate-400 hover:text-cyan-200'
-            }`}
-          >
-            {isAdmin ? (
-              <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0" />
-            ) : (
-              <Lock className="w-4 h-4 text-slate-400 shrink-0" />
-            )}
-            {!collapsed && (
-              <span className="truncate">{isAdmin ? 'สถานะผู้ดูแล (Admin)' : 'เข้าสู่ระบบ Admin'}</span>
-            )}
-          </button>
-        )}
       </nav>
 
       {/* Bottom Live Plan Summary */}
@@ -274,7 +221,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
             </div>
             <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-400 transition-all duration-300"
+                className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-400"
                 style={{ width: `${stats.disbursePct}%` }}
               />
             </div>

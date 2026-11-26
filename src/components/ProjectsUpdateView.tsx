@@ -79,6 +79,7 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
     searchQuery,
     isBulkEditMode,
     setIsBulkEditMode,
+    updateProject,
     bulkUpdateProjects,
     importProjectsFromFile,
     deleteProject,
@@ -88,9 +89,16 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
   const [staffSearchQuery, setStaffSearchQuery] = useState('');
   const [selectedStaffId, setSelectedStaffId] = useState<string>('');
 
+  // Primary workspace tab: default directly to on-page editing so staff can update immediately
+  const [activeWorkspaceMode, setActiveWorkspaceMode] = useState<'direct_edit' | 'sheets_import'>('direct_edit');
+
+  // Single-row quick inline edit state
+  const [inlineEditId, setInlineEditId] = useState<string | null>(null);
+  const [inlineDraft, setInlineDraft] = useState<Project | null>(null);
+  const [recentlySavedId, setRecentlySavedId] = useState<string | null>(null);
+
   // Panels toggles
   const [showGuide, setShowGuide] = useState<boolean>(false);
-  const [showImportPanel, setShowImportPanel] = useState<boolean>(true);
   const [showSchemaSpec, setShowSchemaSpec] = useState<boolean>(false);
   const [importSourceTab, setImportSourceTab] = useState<'google_sheets' | 'local_file'>('google_sheets');
 
@@ -141,6 +149,28 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
 
   const handleSaveBulkEdit = () => {
     bulkUpdateProjects(bulkProjects);
+  };
+
+  const handleStartInlineEdit = (project: Project) => {
+    setInlineEditId(project.id);
+    setInlineDraft({ ...project });
+  };
+
+  const handleCancelInlineEdit = () => {
+    setInlineEditId(null);
+    setInlineDraft(null);
+  };
+
+  const handleSaveInlineEdit = () => {
+    if (!inlineDraft) return;
+    updateProject(inlineDraft, `ปรับปรุงข้อมูลโดยตรงบนหน้าเว็บโดย ${currentUser.name}`);
+    const savedId = inlineDraft.id;
+    setInlineEditId(null);
+    setInlineDraft(null);
+    setRecentlySavedId(savedId);
+    window.setTimeout(() => {
+      setRecentlySavedId((prev) => (prev === savedId ? null : prev));
+    }, 2800);
   };
 
   const isAdmin = currentUser.role === 'admin';
@@ -438,38 +468,25 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
             <div className="bg-[#060D1A] border border-cyan-950 rounded-xl p-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               <div className="flex-1">
                 <label className="block text-[11px] font-medium text-cyan-300/90 mb-1.5">
-                  เลือกจากรายการแบบด่วน (ลำดับที่ 1 - {authorizedUsers.length})
+                  เลือกรายชื่อของท่าน (ลำดับที่ 1 - {authorizedUsers.length}) เพื่อเข้าปรับปรุงข้อมูลบนหน้าเว็บทันที
                 </label>
                 <select
                   value={selectedStaffId}
-                  onChange={(e) => setSelectedStaffId(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-cyan-900/60 bg-[#091326] text-white text-xs font-medium focus:outline-hidden focus:border-cyan-400 cursor-pointer"
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSelectedStaffId(id);
+                    const found = authorizedUsers.find((u) => u.id === id);
+                    if (found) selectUpdater(found);
+                  }}
+                  className="w-full px-3 py-2.5 rounded-xl border border-cyan-800/70 bg-[#091326] text-white text-xs font-medium focus:outline-hidden focus:border-cyan-400 cursor-pointer"
                 >
-                  <option value="">-- กรุณาเลือกรายชื่อผู้ปรับปรุงข้อมูล --</option>
+                  <option value="">-- เลือกรายชื่อผู้ปรับปรุงข้อมูลเพื่อเริ่มแก้ไขทันที --</option>
                   {authorizedUsers.map((u, idx) => (
                     <option key={u.id} value={u.id}>
                       {idx + 1}. {u.name}
                     </option>
                   ))}
                 </select>
-              </div>
-              <div className="sm:pt-5">
-                <button
-                  type="button"
-                  disabled={!selectedStaffId}
-                  onClick={() => {
-                    const found = authorizedUsers.find((u) => u.id === selectedStaffId);
-                    if (found) selectUpdater(found);
-                  }}
-                  className={`w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${
-                    selectedStaffId
-                      ? 'bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 shadow-[0_0_20px_rgba(6,182,212,0.3)] cursor-pointer'
-                      : 'bg-slate-800/60 text-slate-500 border border-slate-800 cursor-not-allowed'
-                  }`}
-                >
-                  <span>ยืนยันและเข้าสู่หน้าปรับปรุงข้อมูล</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
               </div>
             </div>
 
@@ -519,51 +536,84 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
     );
   }
 
-  // STEP 2: Full Update & File Import Workspace
+  // STEP 2: Direct On-Page Update + Google Sheets / File Import Workspace
   return (
     <div className="space-y-5 animate-in fade-in duration-300">
-      {/* Updater Header Bar */}
-      <div className="p-4 rounded-2xl border bg-[#091326] border-cyan-900/50 text-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+      {/* Updater Header Bar with Inline 1-39 Staff Switcher */}
+      <div className="p-4 rounded-2xl border bg-[#091326] border-cyan-900/50 text-slate-100 flex flex-col xl:flex-row xl:items-center justify-between gap-3.5">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shrink-0">
             <UserCheck className="w-5 h-5" />
           </div>
-          <div>
+          <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-slate-400">ผู้ปรับปรุงข้อมูลปัจจุบัน:</span>
-              <span className="font-bold text-sm text-white">{currentUser.name}</span>
+              <span className="text-xs text-slate-400">ผู้ปรับปรุงข้อมูล:</span>
+              {isEditor ? (
+                <select
+                  aria-label="เปลี่ยนรายชื่อผู้ปรับปรุงข้อมูล"
+                  value={currentUser.id}
+                  onChange={(e) => {
+                    const found = authorizedUsers.find((u) => u.id === e.target.value);
+                    if (found) selectUpdater(found);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-cyan-700/70 bg-[#060D1A] text-white text-xs font-bold focus:outline-hidden focus:border-cyan-400 cursor-pointer"
+                >
+                  {authorizedUsers.map((u, idx) => (
+                    <option key={u.id} value={u.id}>
+                      {idx + 1}. {u.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="font-bold text-sm text-white">{currentUser.name}</span>
+              )}
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              หน้าปรับปรุงข้อมูลโครงการ — รองรับการเชื่อมต่อ Google Sheets ออนไลน์, แก้ไขในตาราง และนำเข้าไฟล์ Excel / CSV / JSON
+            <p className="text-[11px] text-slate-400">
+              สามารถเลือกชื่อและปรับปรุงข้อมูลในหน้านี้ได้ทันที หรือสลับไปซิงก์ผ่าน Google Sheets / นำเข้าไฟล์
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => setShowImportPanel(!showImportPanel)}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-colors cursor-pointer flex items-center gap-1.5 ${
-              showImportPanel
-                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-200'
-                : 'bg-[#0C1B38] border-cyan-800/60 text-cyan-200 hover:bg-[#10244C]'
-            }`}
-          >
-            <Cloud className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{showImportPanel ? 'ซ่อนส่วนซิงก์/นำเข้าข้อมูล' : 'Google Sheets / นำเข้าไฟล์'}</span>
-          </button>
+          {/* Mode Switcher: Direct Page Edit (Default) vs Google Sheets / File */}
+          <div className="inline-flex p-1 rounded-xl bg-[#060D1A] border border-cyan-900/60 text-xs">
+            <button
+              type="button"
+              onClick={() => setActiveWorkspaceMode('direct_edit')}
+              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                activeWorkspaceMode === 'direct_edit'
+                  ? 'bg-cyan-500/20 border border-cyan-500/50 text-cyan-200'
+                  : 'text-slate-400 hover:text-white border border-transparent'
+              }`}
+            >
+              <Edit className="w-3.5 h-3.5 text-cyan-400" />
+              <span>ปรับปรุงในหน้าเว็บทันที</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveWorkspaceMode('sheets_import')}
+              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                activeWorkspaceMode === 'sheets_import'
+                  ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-200'
+                  : 'text-slate-400 hover:text-white border border-transparent'
+              }`}
+            >
+              <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Google Sheets / นำเข้าไฟล์</span>
+            </button>
+          </div>
 
           <button
             type="button"
             onClick={() => setShowGuide(!showGuide)}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-colors cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
               showGuide
                 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-200'
                 : 'bg-[#0C1B38] border-cyan-800/60 text-cyan-300 hover:bg-[#10244C]'
             }`}
           >
             <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
-            <span>{showGuide ? 'ซ่อนคู่มือ' : 'ดูคู่มือปรับปรุง'}</span>
+            <span>{showGuide ? 'ซ่อนคู่มือ' : 'คู่มือ'}</span>
             {showGuide ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           </button>
 
@@ -574,26 +624,17 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
                 setSelectedStaffId('');
                 clearUpdater();
               }}
-              className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-[#0C1B38] border border-cyan-800/60 text-cyan-200 hover:bg-[#10244C] hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#0C1B38] border border-cyan-800/60 text-cyan-200 hover:bg-[#10244C] hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
             >
               <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
-              <span>เปลี่ยนผู้ปรับปรุง</span>
+              <span>เลือกรายชื่อใหม่</span>
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={onGoToCatalogPage}
-            className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 flex items-center gap-1.5 cursor-pointer"
-          >
-            <span>ดูหน้าข้อมูลโครงการ</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
         </div>
       </div>
 
-      {/* File Import & Sample Templates Panel */}
-      {showImportPanel && (
+      {/* File Import & Google Sheets Panel (shown when switched to sheets_import tab) */}
+      {activeWorkspaceMode === 'sheets_import' && (
         <div className="bg-[#091224] border border-emerald-800/50 rounded-2xl p-5 sm:p-6 shadow-[0_8px_30px_rgba(16,185,129,0.08)] space-y-5">
           {/* Top Header + Template Download Buttons */}
           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-cyan-950 pb-4">
@@ -1119,7 +1160,9 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
         </div>
       )}
 
-      {/* Control Bar: Filters, Smart Search, Bulk Edit & Admin Add */}
+      {activeWorkspaceMode === 'direct_edit' && (
+        <>
+      {/* Control Bar: Filters, Smart Search, Bulk Edit & Add */}
       <div className="bg-[#091224] border border-cyan-900/40 rounded-2xl p-5 shadow-md space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <ProjectSearchAutocomplete
@@ -1159,13 +1202,13 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
               </>
             )}
 
-            {isAdmin && (
+            {canEdit && (
               <button
                 onClick={onOpenAddModal}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 flex items-center gap-2 shadow-[0_0_15px_rgba(6,182,212,0.3)] cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 flex items-center gap-2 shadow-[0_0_15px_rgba(6,182,212,0.3)] cursor-pointer whitespace-nowrap"
               >
                 <Plus className="w-4 h-4" />
-                <span>เพิ่มข้อมูลโครงการใหม่</span>
+                <span>เพิ่มโครงการใหม่</span>
               </button>
             )}
           </div>
@@ -1348,11 +1391,31 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
                 </tr>
               ) : (
                 filteredProjects.map((p, idx) => {
-                  const remaining = p.budgetAllocated - p.budgetActual;
-                  const rate = p.budgetAllocated > 0 ? (p.budgetActual / p.budgetAllocated) * 100 : 0;
+                  const isRowInlineEditing = !isBulkEditMode && inlineEditId === p.id && inlineDraft !== null;
+                  const row = isRowInlineEditing ? inlineDraft : p;
+                  const isEditingCell = (isBulkEditMode || isRowInlineEditing) && canEdit;
+                  const remaining = row.budgetAllocated - row.budgetActual;
+                  const rate = row.budgetAllocated > 0 ? (row.budgetActual / row.budgetAllocated) * 100 : 0;
+
+                  const handleFieldChange = (field: keyof Project, value: unknown) => {
+                    if (isBulkEditMode) {
+                      handleBulkChange(p.id, field, value);
+                    } else if (isRowInlineEditing && inlineDraft) {
+                      setInlineDraft({ ...inlineDraft, [field]: value });
+                    }
+                  };
 
                   return (
-                    <tr key={p.id} className="hover:bg-[#0A1730] transition-colors group">
+                    <tr
+                      key={p.id}
+                      className={`transition-colors group ${
+                        isRowInlineEditing
+                          ? 'bg-cyan-950/35'
+                          : recentlySavedId === p.id
+                          ? 'bg-emerald-950/30'
+                          : 'hover:bg-[#0A1730]'
+                      }`}
+                    >
                       <td className="py-3 px-3 text-center text-slate-500 font-mono tabular-nums">
                         {idx + 1}
                       </td>
@@ -1362,25 +1425,28 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
                           onClick={() => onOpenProjectDetail(p.id)}
                           className="text-left font-semibold text-white hover:text-cyan-300 transition-colors cursor-pointer leading-tight block"
                         >
-                          {p.name}
+                          {row.name}
                         </button>
                         <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
-                          <span className="font-mono text-cyan-400">{p.code}</span>
+                          <span className="font-mono text-cyan-400">{row.code}</span>
                           <span>·</span>
-                          <span className="truncate max-w-[180px]">{p.targetGroup}</span>
+                          <span className="truncate max-w-[180px]">{row.targetGroup}</span>
+                          {recentlySavedId === p.id && (
+                            <span className="text-emerald-400 font-semibold">· บันทึกแล้ว ✓</span>
+                          )}
                         </div>
                       </td>
 
                       <td className="py-3 px-3 text-xs text-slate-300">
-                        {p.fundingSource === 'budget_annual' ? 'งบประมาณแผ่นดิน' : 'เงินกองทุน สตง.'}
+                        {row.fundingSource === 'budget_annual' ? 'งบประมาณแผ่นดิน' : 'เงินกองทุน สตง.'}
                       </td>
 
                       <td className="py-3 px-3">
-                        {isBulkEditMode && canEdit ? (
+                        {isEditingCell ? (
                           <select
-                            value={p.status}
-                            onChange={(e) => handleBulkChange(p.id, 'status', e.target.value as ProjectStatus)}
-                            className="w-full px-2 py-1 text-xs rounded border border-cyan-700 bg-[#060D1A] text-white font-medium"
+                            value={row.status}
+                            onChange={(e) => handleFieldChange('status', e.target.value as ProjectStatus)}
+                            className="w-full px-2 py-1 text-xs rounded border border-cyan-500 bg-[#060D1A] text-white font-medium"
                           >
                             <option value="in_progress">อยู่ระหว่างดำเนินการ</option>
                             <option value="not_started">ยังไม่ได้ดำเนินการ</option>
@@ -1388,11 +1454,11 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
                           </select>
                         ) : (
                           <div className="flex items-center gap-1.5 font-medium">
-                            {p.status === 'completed' ? (
+                            {row.status === 'completed' ? (
                               <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold">
                                 <CheckCircle2 className="w-3.5 h-3.5" /> เสร็จแล้ว
                               </span>
-                            ) : p.status === 'in_progress' ? (
+                            ) : row.status === 'in_progress' ? (
                               <span className="inline-flex items-center gap-1 text-cyan-300">
                                 <Clock className="w-3.5 h-3.5 text-cyan-400" /> อยู่ระหว่างดำเนินการ
                               </span>
@@ -1406,80 +1472,80 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
                       </td>
 
                       <td className="py-3 px-2 text-center font-mono font-medium text-slate-300">
-                        {p.quarters.join(', ')}
+                        {row.quarters.join(', ')}
                       </td>
 
                       <td className="py-3 px-3 whitespace-normal max-w-xs">
-                        {isBulkEditMode && canEdit ? (
+                        {isEditingCell ? (
                           <input
                             type="text"
-                            value={p.actualDateOrQuarter || ''}
-                            onChange={(e) => handleBulkChange(p.id, 'actualDateOrQuarter', e.target.value)}
+                            value={row.actualDateOrQuarter || ''}
+                            onChange={(e) => handleFieldChange('actualDateOrQuarter', e.target.value)}
                             placeholder="ระบุวันจัดจริง..."
-                            className="w-full px-2 py-1 rounded border border-cyan-700 bg-[#060D1A] text-white text-xs font-mono"
+                            className="w-full px-2 py-1 rounded border border-cyan-500 bg-[#060D1A] text-white text-xs font-mono"
                           />
                         ) : (
                           <span className="text-slate-300 font-mono text-[11px]">
-                            {p.actualDateOrQuarter || p.executionDateSchedule || '-'}
+                            {row.actualDateOrQuarter || row.executionDateSchedule || '-'}
                           </span>
                         )}
                       </td>
 
                       <td className="py-3 px-2 text-center font-mono tabular-nums">
-                        {isBulkEditMode && canEdit ? (
+                        {isEditingCell ? (
                           <div className="flex items-center justify-center gap-1">
                             <input
                               type="number"
                               min="0"
-                              value={p.batchesActual}
-                              onChange={(e) => handleBulkChange(p.id, 'batchesActual', Number(e.target.value))}
-                              className="w-12 px-1 py-1 text-center rounded border border-cyan-700 bg-[#060D1A] text-white font-bold"
+                              value={row.batchesActual}
+                              onChange={(e) => handleFieldChange('batchesActual', Number(e.target.value))}
+                              className="w-12 px-1 py-1 text-center rounded border border-cyan-500 bg-[#060D1A] text-white font-bold"
                             />
-                            <span className="text-slate-500">/{p.batchesPlanned}</span>
+                            <span className="text-slate-500">/{row.batchesPlanned}</span>
                           </div>
                         ) : (
                           <span>
-                            <strong className="text-white">{p.batchesActual}</strong> / {p.batchesPlanned}
+                            <strong className="text-white">{row.batchesActual}</strong> / {row.batchesPlanned}
                           </span>
                         )}
                       </td>
 
                       <td className="py-3 px-3 text-center font-mono tabular-nums">
-                        {isBulkEditMode && canEdit ? (
+                        {isEditingCell ? (
                           <input
                             type="number"
                             min="0"
-                            value={p.participantsActual}
-                            onChange={(e) => handleBulkChange(p.id, 'participantsActual', Number(e.target.value))}
-                            className="w-16 px-1 py-1 text-center rounded border border-cyan-700 bg-[#060D1A] text-white font-bold"
+                            value={row.participantsActual}
+                            onChange={(e) => handleFieldChange('participantsActual', Number(e.target.value))}
+                            className="w-16 px-1 py-1 text-center rounded border border-cyan-500 bg-[#060D1A] text-white font-bold"
                           />
                         ) : (
                           <div>
-                            <span className="font-bold text-white">{p.participantsActual}</span>
+                            <span className="font-bold text-white">{row.participantsActual}</span>
                             <span className="text-[10px] text-slate-400 block font-normal">
-                              แผน {p.participantsPlanned} คน ({p.participantsPerBatch}/รุ่น)
+                              แผน {row.participantsPlanned} คน ({row.participantsPerBatch}/รุ่น)
                             </span>
                           </div>
                         )}
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono font-medium text-slate-200 tabular-nums">
-                        ฿{p.budgetAllocated.toLocaleString()}
+                        ฿{row.budgetAllocated.toLocaleString()}
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono tabular-nums">
-                        {isBulkEditMode && canEdit ? (
+                        {isEditingCell ? (
                           <input
                             type="number"
                             min="0"
-                            value={p.budgetActual}
-                            onChange={(e) => handleBulkChange(p.id, 'budgetActual', Number(e.target.value))}
-                            className="w-28 px-1.5 py-1 text-right rounded border border-cyan-700 bg-[#060D1A] text-white font-bold"
+                            value={row.budgetActual}
+                            onChange={(e) => handleFieldChange('budgetActual', Number(e.target.value))}
+                            className="w-28 px-1.5 py-1 text-right rounded border border-cyan-500 bg-[#060D1A] text-white font-bold"
                           />
                         ) : (
                           <div>
                             <span className="font-bold text-slate-300">
-                              ฿{p.budgetActual.toLocaleString()}
+                              ฿{row.budgetActual.toLocaleString()}
                             </span>
                             <span className="text-[10px] text-cyan-400/80 block font-normal">
                               ({rate.toFixed(1)}%)
@@ -1494,37 +1560,76 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
 
                       <td className="sticky right-0 z-10 bg-[#091224] group-hover:bg-[#0A1730] py-3 px-3 text-center border-l border-cyan-900/50 shadow-[-6px_0_12px_rgba(4,9,20,0.5)]">
                         <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => onOpenProjectDetail(p.id)}
-                            title="ดูรายละเอียดโครงการ"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-[#0C1D3D] transition-colors cursor-pointer"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
+                          {isRowInlineEditing ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={handleSaveInlineEdit}
+                                title="บันทึกการแก้ไขแถวนี้ทันที"
+                                className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold transition-colors cursor-pointer inline-flex items-center gap-1"
+                              >
+                                <Save className="w-3.5 h-3.5" />
+                                <span className="text-[11px]">บันทึก</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleCancelInlineEdit}
+                                title="ยกเลิก"
+                                className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {canEdit && !isBulkEditMode && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartInlineEdit(p)}
+                                  title="แก้ไขด่วนในตารางทันที"
+                                  className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-400 hover:text-slate-950 font-semibold transition-colors cursor-pointer inline-flex items-center gap-1"
+                                >
+                                  <Save className="w-3.5 h-3.5" />
+                                  <span className="text-[11px]">แก้ไขด่วน</span>
+                                </button>
+                              )}
 
-                          {canEdit && (
-                            <button
-                              onClick={() => onOpenEditModal(p)}
-                              title="แก้ไขข้อมูลโครงการ"
-                              className="px-2 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-400 hover:text-slate-950 font-semibold transition-colors cursor-pointer inline-flex items-center gap-1"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                              <span className="text-[11px]">แก้ไข</span>
-                            </button>
-                          )}
+                              {canEdit && (
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenEditModal(p)}
+                                  title="แก้ไขรายละเอียดโครงการทั้งหมด"
+                                  className="px-2 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-400 hover:text-slate-950 font-semibold transition-colors cursor-pointer inline-flex items-center gap-1"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                  <span className="text-[11px]">รายละเอียด</span>
+                                </button>
+                              )}
 
-                          {isAdmin && (
-                            <button
-                              onClick={() => {
-                                if (confirm(`ยืนยันการลบโครงการ "${p.name}"?`)) {
-                                  deleteProject(p.id);
-                                }
-                              }}
-                              title="ลบโครงการ"
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => onOpenProjectDetail(p.id)}
+                                title="ดูรายละเอียดโครงการ"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-[#0C1D3D] transition-colors cursor-pointer"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (confirm(`ยืนยันการลบโครงการ "${p.name}"?`)) {
+                                      deleteProject(p.id);
+                                    }
+                                  }}
+                                  title="ลบโครงการ"
+                                  className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </>
                           )}
                         </div>
                       </td>
@@ -1557,6 +1662,8 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
           </table>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

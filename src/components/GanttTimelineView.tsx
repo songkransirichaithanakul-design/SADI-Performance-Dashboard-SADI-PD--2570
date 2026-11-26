@@ -203,16 +203,6 @@ export const GanttTimelineView: React.FC<GanttTimelineViewProps> = ({
               ติดตามช่วงเวลาดำเนินการ สถานะความคืบหน้า และรุ่นที่จัดอบรมของทุกโครงการในมุมมองปฏิทิน 12 เดือน · คลิกที่แถวโครงการเพื่อดูรายละเอียด
             </p>
           </div>
-          {onGoToUpdatePage && (
-            <button
-              type="button"
-              onClick={onGoToUpdatePage}
-              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 text-xs font-bold inline-flex items-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all cursor-pointer whitespace-nowrap shrink-0 self-start lg:self-auto"
-            >
-              <span>ปรับปรุงสถานะ / Google Sheets</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          )}
         </div>
       </div>
 

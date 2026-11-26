@@ -77,8 +77,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </div>
 
-          {/* Zone 2: Nav links */}
-          <nav className="hidden md:flex items-center gap-1 lg:gap-1.5">
+          {/* Zone 2: Nav links (tablet only — desktop lg+ uses LeftSidebar to avoid duplicate menus) */}
+          <nav className="hidden md:flex lg:hidden items-center gap-1">
             <button
               onClick={() => setCurrentTab('dashboard')}
               className={`px-3 py-1.5 rounded-xl text-xs lg:text-sm font-medium transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
@@ -144,13 +144,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </nav>
 
-          {/* Zone 3: Single Public Share Link Button & Controls */}
+          {/* Zone 3: Utility Controls (Share button shown only on < lg; desktop lg+ uses LeftSidebar) */}
           <div className="flex items-center gap-2 shrink-0">
-            {/* Single Share Public Link Button */}
+            {/* Share Public Link Button (mobile/tablet only) */}
             <button
               onClick={onOpenShareModal}
               title="สร้างลิงก์เผยแพร่สาธารณะ"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-cyan-600/60 bg-[#0A1730] hover:bg-cyan-500/20 text-cyan-200 hover:text-white text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0"
+              className="flex lg:hidden items-center gap-1.5 px-3 py-1.5 rounded-xl border border-cyan-600/60 bg-[#0A1730] hover:bg-cyan-500/20 text-cyan-200 hover:text-white text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0"
             >
               <Share2 className="w-3.5 h-3.5 text-cyan-400" />
               <span className="hidden sm:inline">สร้างลิงก์สาธารณะ</span>

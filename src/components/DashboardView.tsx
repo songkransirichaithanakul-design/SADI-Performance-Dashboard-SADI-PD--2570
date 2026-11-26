@@ -14,7 +14,6 @@ import {
   ShieldCheck,
   Zap,
   MousePointerClick,
-  CalendarRange,
 } from 'lucide-react';
 import { ProjectSearchAutocomplete } from './ProjectSearchAutocomplete';
 
@@ -27,13 +26,11 @@ interface DashboardNavigateFilter {
 
 interface DashboardViewProps {
   onNavigateToProjects: (filter?: DashboardNavigateFilter) => void;
-  onNavigateToTimeline: () => void;
   onOpenProjectDetail: (projectId: string) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigateToProjects,
-  onNavigateToTimeline,
   onOpenProjectDetail,
 }) => {
   const {
@@ -248,25 +245,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0 pt-1">
             <button
-              onClick={onNavigateToTimeline}
-              className="px-3.5 py-2 rounded-xl text-xs font-semibold border border-cyan-600/60 bg-cyan-950/50 text-cyan-200 hover:bg-cyan-500/20 hover:text-white flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <CalendarRange className="w-3.5 h-3.5 text-cyan-400" />
-              <span>ไทม์ไลน์ (Gantt)</span>
-            </button>
-            <button
               onClick={exportDataToCSV}
               className="px-3.5 py-2 rounded-xl text-xs font-semibold border border-cyan-800/60 bg-[#0A1730] text-cyan-200 hover:bg-[#0E2248] hover:text-white flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-400" />
               <span>ส่งออก CSV</span>
-            </button>
-            <button
-              onClick={() => onNavigateToProjects({ funding: selectedFundingFilter, quarter: selectedQuarterFilter, status: 'all', category: 'all' })}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 flex items-center gap-2 transition-all shadow-[0_0_20px_rgba(6,182,212,0.3)] cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <span>ดูข้อมูลโครงการทั้งหมด</span>
-              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -468,25 +451,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Chart 1: Interactive Quarterly Allocation Bars + Status-by-Quarter Drilldown + Dynamic S-Curve */}
         <div className="lg:col-span-2 bg-[#091224] border border-cyan-900/40 rounded-2xl p-6 shadow-md space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <h3 className="font-bold text-white text-base flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-cyan-400" />
-                <span>แผนงบประมาณรายไตรมาสและสถานะโครงการ (คลิกดูรายละเอียดรายไตรมาสได้)</span>
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
-                <MousePointerClick className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                <span>กดที่แท่งไตรมาส (เช่น Q1 {quarterlyTrend.list[0]?.count || 0} โครงการ) หรือเปิด Gantt Timeline 12 เดือน</span>
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onNavigateToTimeline}
-              className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-600/50 text-cyan-300 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap shrink-0 self-start sm:self-auto"
-            >
-              <CalendarRange className="w-3.5 h-3.5" />
-              <span>เปิด Gantt 12 เดือน</span>
-            </button>
+          <div>
+            <h3 className="font-bold text-white text-base flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-cyan-400" />
+              <span>แผนงบประมาณรายไตรมาสและสถานะโครงการ (คลิกดูรายละเอียดรายไตรมาสได้)</span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
+              <MousePointerClick className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <span>กดที่แท่งไตรมาส (เช่น Q1 {quarterlyTrend.list[0]?.count || 0} โครงการ) เพื่อเปิดดูรายการโครงการของไตรมาสนั้น</span>
+            </p>
           </div>
 
           {/* Interactive Colorful Quarterly Cards with Embedded Status Drilldown */}

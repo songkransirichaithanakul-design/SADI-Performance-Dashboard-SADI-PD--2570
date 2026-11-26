@@ -1,24 +1,26 @@
 import React from 'react';
 import { Project } from '../types';
-import { X, CheckCircle2, Clock, AlertCircle, Edit, DollarSign, Users, Calendar, Award, Building, FileText, Sparkles } from 'lucide-react';
+import { X, CheckCircle2, Clock, AlertCircle, Edit, DollarSign, Users, Calendar, Award, Building, FileText, Sparkles, UserCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 interface ProjectDetailDrawerProps {
   project: Project | null;
   onClose: () => void;
   onEdit: (project: Project) => void;
+  isPublicView?: boolean;
 }
 
 export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
   project,
   onClose,
   onEdit,
+  isPublicView = false,
 }) => {
-  const { currentUser } = useApp();
+  const { currentUser, authorizedUsers, selectUpdater } = useApp();
 
   if (!project) return null;
 
-  const canEdit = currentUser.role === 'admin' || currentUser.role === 'editor';
+  const canEdit = !isPublicView && (currentUser.role === 'admin' || currentUser.role === 'editor');
   const remainingBudget = project.budgetAllocated - project.budgetActual;
   const disbursementRate = project.budgetAllocated > 0 ? (project.budgetActual / project.budgetAllocated) * 100 : 0;
 
@@ -63,6 +65,33 @@ export const ProjectDetailDrawer: React.FC<ProjectDetailDrawerProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Quick inline staff selector so authorized staff can pick their name and edit immediately */}
+        {!isPublicView && currentUser.role === 'viewer' && (
+          <div className="px-6 py-3 bg-[#08152D] border-b border-cyan-900/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2 text-xs text-cyan-200">
+              <UserCheck className="w-4 h-4 text-cyan-400 shrink-0" />
+              <span>ผู้มีรายชื่อ (1–{authorizedUsers.length}): เลือกชื่อของท่านเพื่อแก้ไขโครงการนี้ทันที</span>
+            </div>
+            <select
+              value=""
+              onChange={(e) => {
+                const found = authorizedUsers.find((u) => u.id === e.target.value);
+                if (found) {
+                  selectUpdater(found);
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg border border-cyan-700/70 bg-[#060D1A] text-white text-xs font-medium focus:outline-hidden focus:border-cyan-400 cursor-pointer min-w-[210px]"
+            >
+              <option value="">-- เลือกชื่อเพื่อเริ่มแก้ไขทันที --</option>
+              {authorizedUsers.map((u, idx) => (
+                <option key={u.id} value={u.id}>
+                  {idx + 1}. {u.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Drawer Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">

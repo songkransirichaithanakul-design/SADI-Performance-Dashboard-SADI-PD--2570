@@ -122,8 +122,6 @@ const MainAppContent: React.FC = () => {
           onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
           onOpenShareModal={() => setIsShareModalOpen(true)}
           onOpenAddModal={handleOpenAddModal}
-          onOpenNotifications={() => setIsNotificationsOpen(true)}
-          onOpenUserModal={() => setIsUserModalOpen(true)}
           isPublicView={isPublicView}
         />
 
@@ -133,10 +131,6 @@ const MainAppContent: React.FC = () => {
         {(currentTab === 'dashboard' || (currentTab === 'admin' && currentUser.role !== 'admin')) && (
           <DashboardView
             onNavigateToProjects={handleNavigateToProjects}
-            onNavigateToTimeline={() => {
-              setCurrentTab('timeline');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
             onOpenProjectDetail={(id) => setSelectedProjectId(id)}
           />
         )}
@@ -144,14 +138,6 @@ const MainAppContent: React.FC = () => {
         {currentTab === 'timeline' && (
           <GanttTimelineView
             onOpenProjectDetail={(id) => setSelectedProjectId(id)}
-            onGoToUpdatePage={
-              !isPublicView
-                ? () => {
-                    setCurrentTab('update');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }
-                : undefined
-            }
           />
         )}
 
@@ -238,6 +224,7 @@ const MainAppContent: React.FC = () => {
         project={selectedProject}
         onClose={() => setSelectedProjectId(null)}
         onEdit={handleOpenEditModal}
+        isPublicView={isPublicView}
       />
 
       <ProjectModal
