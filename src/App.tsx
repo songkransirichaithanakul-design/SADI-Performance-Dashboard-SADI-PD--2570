@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Navbar } from './components/Navbar';
 import { LeftSidebar } from './components/LeftSidebar';
+import { MobileBottomNav } from './components/MobileBottomNav';
 import { DashboardView } from './components/DashboardView';
 import { GanttTimelineView } from './components/GanttTimelineView';
 import { ProjectsCatalogView } from './components/ProjectsCatalogView';
@@ -65,6 +66,7 @@ const MainAppContent: React.FC = () => {
   const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobileToolsOpen, setIsMobileToolsOpen] = useState(false);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
 
@@ -109,7 +111,7 @@ const MainAppContent: React.FC = () => {
         setCurrentTab={handleNavTabChange}
         onOpenUserModal={() => setIsUserModalOpen(true)}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
-        onOpenShareModal={() => setIsShareModalOpen(true)}
+        onOpenMobileTools={() => setIsMobileToolsOpen(true)}
         isPublicView={isPublicView}
       />
 
@@ -125,7 +127,7 @@ const MainAppContent: React.FC = () => {
           isPublicView={isPublicView}
         />
 
-        <div className="flex-1 min-w-0 flex flex-col">
+        <div className="flex-1 min-w-0 flex flex-col pb-16 md:pb-0">
           {/* Main Content Viewport */}
           <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {(currentTab === 'dashboard' || (currentTab === 'admin' && currentUser.role !== 'admin')) && (
@@ -188,6 +190,20 @@ const MainAppContent: React.FC = () => {
           <SadiFooter />
         </div>
       </div>
+
+      {/* Mobile Bottom Navigation Bar & Full Tools Bottom Sheet */}
+      <MobileBottomNav
+        currentTab={currentTab}
+        setCurrentTab={handleNavTabChange}
+        isToolsOpen={isMobileToolsOpen}
+        onOpenTools={() => setIsMobileToolsOpen(true)}
+        onCloseTools={() => setIsMobileToolsOpen(false)}
+        onOpenShareModal={() => setIsShareModalOpen(true)}
+        onOpenAddModal={handleOpenAddModal}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
+        onOpenUserModal={() => setIsUserModalOpen(true)}
+        isPublicView={isPublicView}
+      />
 
       {/* Modals & Drawers */}
       <UserAuthModal
