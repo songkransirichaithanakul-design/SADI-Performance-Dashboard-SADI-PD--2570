@@ -12,10 +12,15 @@ import {
   FileSpreadsheet,
   Sliders,
   ShieldCheck,
+  ShieldAlert,
   Zap,
   MousePointerClick,
 } from 'lucide-react';
 import { ProjectSearchAutocomplete } from './ProjectSearchAutocomplete';
+import {
+  detectSystemDuplicates,
+  getDuplicateReasonLabel,
+} from '../utils/duplicateDetection';
 
 interface DashboardNavigateFilter {
   funding?: FundingSource | 'all';
@@ -44,6 +49,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Interactive Scenario Simulator State (disbursement simulation rate 0% - 100%)
   const [simulatedRate, setSimulatedRate] = useState<number>(0);
+
+  // Automatic system-wide duplicate / overlapping budget detection
+  const systemDuplicates = useMemo(() => detectSystemDuplicates(projects), [projects]);
 
   // Filtered projects for dashboard based on selected funding source & quarter
   const filteredProjects = useMemo(() => {
@@ -330,6 +338,71 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Automatic Duplicate & Budget Overlap Alert Banner (shown only when duplicates exist) */}
+      {systemDuplicates.length > 0 && (
+        <div
+          role="alert"
+          className="bg-[#091224] border border-amber-500/70 rounded-2xl p-4 sm:p-5 shadow-lg space-y-3 text-xs"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-start gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="font-bold text-amber-200 text-sm">
+                  แจ้งเตือนอัตโนมัติ: พบข้อมูลโครงการหรืองบประมาณที่อาจซ้ำซ้อน {systemDuplicates.length} คู่ (แม้รหัสโครงการต่างกัน)
+                </div>
+                <p className="text-slate-300 mt-0.5">
+                  ยอดงบประมาณรวมบนหน้า Dashboard อาจมีการนับรวมซ้อนกัน กรุณาคลิกตรวจสอบรายการด้านล่าง หรือให้ผู้ดูแลระบบจัดการลบรายการซ้ำในหน้า Admin
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            {systemDuplicates.slice(0, 4).map((pair) => (
+              <div
+                key={pair.id}
+                className="p-2.5 rounded-xl bg-[#060D1A] border border-amber-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]"
+              >
+                <div className="space-y-0.5 min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => onOpenProjectDetail(pair.projectA.id)}
+                      className="font-mono font-bold text-cyan-300 hover:text-cyan-200 px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-800 cursor-pointer"
+                    >
+                      {pair.projectA.code}
+                    </button>
+                    <span className="text-amber-400 font-bold">↔</span>
+                    <button
+                      type="button"
+                      onClick={() => onOpenProjectDetail(pair.projectB.id)}
+                      className="font-mono font-bold text-amber-300 hover:text-amber-200 px-1.5 py-0.5 rounded bg-amber-950 border border-amber-700 cursor-pointer"
+                    >
+                      {pair.projectB.code}
+                    </button>
+                  </div>
+                  <div className="text-slate-300 truncate">{getDuplicateReasonLabel(pair.reason)}</div>
+                </div>
+                <div className="font-mono tabular-nums text-right shrink-0">
+                  {pair.overlapBudgetActual > 0 ? (
+                    <span className="text-rose-300 font-bold">
+                      ใช้จริงซ้อน ฿{pair.overlapBudgetActual.toLocaleString()}
+                    </span>
+                  ) : (
+                    <span className="text-amber-300 font-semibold">
+                      จัดสรรซ้อน ฿{pair.overlapBudgetAllocated.toLocaleString()}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 4 Primary Non-Duplicative KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

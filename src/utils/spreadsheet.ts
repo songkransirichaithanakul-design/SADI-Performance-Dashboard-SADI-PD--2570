@@ -158,6 +158,11 @@ function getField(rowObj: Record<string, unknown>, candidates: string[]): unknow
   return undefined;
 }
 
+function hasFieldColumn(rowObj: Record<string, unknown>, candidates: string[]): boolean {
+  const normalizedKeys = new Set(Object.keys(rowObj).map(normalizeHeader));
+  return candidates.some((cand) => normalizedKeys.has(normalizeHeader(cand)));
+}
+
 function hasRecognizedProjectColumns(rec: Record<string, unknown>): boolean {
   const keys = Object.keys(rec).map(normalizeHeader);
   const codeOrNameKeys = ['รหัสโครงการ', 'รหัส', 'code', 'projectcode', 'ชื่อโครงการหลักสูตร', 'ชื่อโครงการ', 'name', 'projectname'];
@@ -533,16 +538,17 @@ export function parseRawProjectRecords(
       return;
     }
 
+    // Always skip unfilled template placeholder rows (e.g. "(เพิ่มชื่อโครงการใหม่)")
+    // even if a placeholder code previously existed in the database, so cleared rows are treated as removed.
+    if (!rawName || isPlaceholderProjectName(rawName)) {
+      skippedPlaceholderCount += 1;
+      return;
+    }
+
     const matched =
       (rawId ? idMap.get(rawId.toLowerCase()) : undefined) ||
       (rawCode ? codeMap.get(rawCode.toLowerCase()) : undefined) ||
       (rawName ? nameMap.get(rawName.toLowerCase()) : undefined);
-
-    // Automatically skip unfilled template placeholder rows (e.g. FND-70-27 | "(เพิ่มชื่อโครงการใหม่)")
-    if (!matched && (!rawName || isPlaceholderProjectName(rawName))) {
-      skippedPlaceholderCount += 1;
-      return;
-    }
 
     const base: Project = matched || {
       id: `imp-${Date.now()}-${index}`,
@@ -608,49 +614,58 @@ export function parseRawProjectRecords(
     const rawSched = getField(rec, ['กำหนดการตามแผน', 'กำหนดการดำเนินการ', 'executiondateschedule']);
     const nextSched = rawSched !== undefined && String(rawSched).trim() !== '' ? String(rawSched).trim() : base.executionDateSchedule;
 
-    const rawActualDate = getField(rec, [
+    const actualDateAliases = [
       'ดำเนินการจริง',
       'ดำเนินการจริง (เปลี่ยนแปลงได้)',
       'วันที่จัดจริง / ไตรมาสจริง',
       'วันที่ดำเนินการจริง',
       'actualdateorquarter',
-    ]);
-    const cleanedActualDate =
-      rawActualDate !== undefined && String(rawActualDate).trim() !== '-'
-        ? String(rawActualDate).trim()
-        : base.actualDateOrQuarter || '';
+    ];
+    const rawActualDate = getField(rec, actualDateAliases);
+    const cleanedActualDate = hasFieldColumn(rec, actualDateAliases)
+      ? String(rawActualDate ?? '').trim() === '-'
+        ? ''
+        : String(rawActualDate ?? '').trim()
+      : base.actualDateOrQuarter || '';
+
+    const batchesPlannedAliases = ['จำนวนรุ่น/โครงการตามแผน', 'จำนวนรุ่นตามแผน', 'รุ่นตามแผน', 'batchesplanned'];
+    const batchesActualAliases = ['จำนวนรุ่น/โครงการจริง', 'จำนวนรุ่นจริง', 'จำนวนรุ่นที่จัดจริง', 'รุ่นจริง', 'batchesactual'];
+    const partPlannedAliases = ['คนเข้าอบรมตามแผน', 'ผู้เข้าอบรมตามแผน (คน)', 'ผู้เข้าอบรมตามแผน', 'participantsplanned'];
+    const partActualAliases = ['คนเข้าอบรมจริง', 'ผู้เข้าอบรมจริง (คน)', 'ผู้เข้าอบรมจริง', 'participantsactual'];
+    const budgetAllocAliases = ['งบจัดสรร (บาท)', 'งบประมาณจัดสรร (บาท)', 'งบประมาณที่ได้รับจัดสรร', 'งบจัดสรร', 'budgetallocated'];
+    const budgetActualAliases = ['งบใช้จ่ายจริง (บาท)', 'งบประมาณใช้จริง (บาท)', 'ใช้จ่ายจริง (บาท)', 'งบใช้จ่ายจริง', 'ผลเบิกจ่ายจริง', 'budgetactual'];
 
     const nextBatchesPlanned = Math.round(
       parseNumberSafe(
-        getField(rec, ['จำนวนรุ่น/โครงการตามแผน', 'จำนวนรุ่นตามแผน', 'รุ่นตามแผน', 'batchesplanned']),
-        base.batchesPlanned
+        getField(rec, batchesPlannedAliases),
+        hasFieldColumn(rec, batchesPlannedAliases) ? 0 : base.batchesPlanned
       )
     );
     const nextBatchesActual = Math.round(
       parseNumberSafe(
-        getField(rec, ['จำนวนรุ่น/โครงการจริง', 'จำนวนรุ่นจริง', 'จำนวนรุ่นที่จัดจริง', 'รุ่นจริง', 'batchesactual']),
-        base.batchesActual
+        getField(rec, batchesActualAliases),
+        hasFieldColumn(rec, batchesActualAliases) ? 0 : base.batchesActual
       )
     );
     const nextPartPlanned = Math.round(
       parseNumberSafe(
-        getField(rec, ['คนเข้าอบรมตามแผน', 'ผู้เข้าอบรมตามแผน (คน)', 'ผู้เข้าอบรมตามแผน', 'participantsplanned']),
-        base.participantsPlanned
+        getField(rec, partPlannedAliases),
+        hasFieldColumn(rec, partPlannedAliases) ? 0 : base.participantsPlanned
       )
     );
     const nextPartActual = Math.round(
       parseNumberSafe(
-        getField(rec, ['คนเข้าอบรมจริง', 'ผู้เข้าอบรมจริง (คน)', 'ผู้เข้าอบรมจริง', 'participantsactual']),
-        base.participantsActual
+        getField(rec, partActualAliases),
+        hasFieldColumn(rec, partActualAliases) ? 0 : base.participantsActual
       )
     );
     const nextBudgetAllocated = parseNumberSafe(
-      getField(rec, ['งบจัดสรร (บาท)', 'งบประมาณจัดสรร (บาท)', 'งบประมาณที่ได้รับจัดสรร', 'งบจัดสรร', 'budgetallocated']),
-      base.budgetAllocated
+      getField(rec, budgetAllocAliases),
+      hasFieldColumn(rec, budgetAllocAliases) ? 0 : base.budgetAllocated
     );
     const nextBudgetActual = parseNumberSafe(
-      getField(rec, ['งบใช้จ่ายจริง (บาท)', 'งบประมาณใช้จริง (บาท)', 'ใช้จ่ายจริง (บาท)', 'งบใช้จ่ายจริง', 'ผลเบิกจ่ายจริง', 'budgetactual']),
-      base.budgetActual
+      getField(rec, budgetActualAliases),
+      hasFieldColumn(rec, budgetActualAliases) ? 0 : base.budgetActual
     );
 
     const updatedProject: Project = {

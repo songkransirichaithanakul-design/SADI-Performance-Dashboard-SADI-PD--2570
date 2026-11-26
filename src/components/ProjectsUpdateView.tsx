@@ -30,6 +30,7 @@ import {
   Table2,
   Loader2,
   Lock,
+  ShieldAlert,
 } from 'lucide-react';
 import { ProjectSearchAutocomplete } from './ProjectSearchAutocomplete';
 import { ImportPreviewConfirmPanel } from './ImportPreviewConfirmPanel';
@@ -41,6 +42,10 @@ import {
   parseImportedFile,
   ImportParseResult,
 } from '../utils/spreadsheet';
+import {
+  detectSystemDuplicates,
+  getDuplicateReasonLabel,
+} from '../utils/duplicateDetection';
 
 interface ProjectsUpdateViewProps {
   onOpenProjectDetail: (projectId: string) => void;
@@ -227,6 +232,15 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
     selectedQuarterFilter,
     selectedStatusFilter,
   ]);
+
+  const liveEditDuplicates = useMemo(() => {
+    const activeList = isBulkEditMode
+      ? bulkProjects
+      : inlineDraft
+      ? projects.map((p) => (p.id === inlineDraft.id ? inlineDraft : p))
+      : projects;
+    return detectSystemDuplicates(activeList);
+  }, [isBulkEditMode, bulkProjects, inlineDraft, projects]);
 
   const aggregates = useMemo(() => {
     const totalAllocated = filteredProjects.reduce((s, p) => s + p.budgetAllocated, 0);
@@ -833,6 +847,54 @@ export const ProjectsUpdateView: React.FC<ProjectsUpdateViewProps> = ({
 
       {activeWorkspaceMode === 'direct_edit' && (
         <>
+      {/* Automatic Duplicate & Budget Overlap Alert (Live during on-page inline/bulk edits) */}
+      {liveEditDuplicates.length > 0 && (
+        <div
+          role="alert"
+          className="bg-[#091224] border border-amber-500/70 rounded-2xl p-4 shadow-md space-y-2.5 text-xs"
+        >
+          <div className="flex items-start gap-2.5">
+            <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold text-amber-200">
+                แจ้งเตือนอัตโนมัติ: พบข้อมูลโครงการหรือยอดงบประมาณอาจซ้ำซ้อน {liveEditDuplicates.length} คู่ (แม้รหัสโครงการต่างกัน)
+              </div>
+              <p className="text-[11px] text-amber-100/85 mt-0.5">
+                กรุณาตรวจสอบรายการที่คล้ายกันหรือมียอดเบิกจ่ายเท่ากันด้านล่างก่อนบันทึก เพื่อป้องกันยอดงบประมาณซ้ำซ้อน
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            {liveEditDuplicates.slice(0, 4).map((pair) => (
+              <div
+                key={pair.id}
+                className="p-2.5 rounded-xl bg-[#060D1A] border border-amber-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]"
+              >
+                <div className="space-y-0.5 min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5 font-semibold text-white">
+                    <span className="font-mono text-cyan-300 px-1.5 py-0.2 rounded bg-cyan-950 border border-cyan-800">
+                      {pair.projectA.code}
+                    </span>
+                    <span className="text-amber-400 font-bold">↔</span>
+                    <span className="font-mono text-amber-300 px-1.5 py-0.2 rounded bg-amber-950 border border-amber-700">
+                      {pair.projectB.code}
+                    </span>
+                  </div>
+                  <div className="text-amber-300 truncate">
+                    {getDuplicateReasonLabel(pair.reason)} — {pair.explanation}
+                  </div>
+                </div>
+                <div className="font-mono tabular-nums text-right shrink-0 text-amber-200">
+                  {pair.overlapBudgetActual > 0
+                    ? `ใช้จริงซ้อน ฿${pair.overlapBudgetActual.toLocaleString()}`
+                    : `จัดสรรซ้อน ฿${pair.overlapBudgetAllocated.toLocaleString()}`}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Control Bar: Filters, Smart Search, Bulk Edit & Add */}
       <div className="bg-[#091224] border border-cyan-900/40 rounded-2xl p-5 shadow-md space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

@@ -186,6 +186,9 @@ const MainAppContent: React.FC = () => {
 
         {currentTab === 'admin' && currentUser.role === 'admin' && !isPublicView && (
           <AdminAuditLogsView
+            onOpenEditModal={handleOpenEditModal}
+            onOpenAddModal={handleOpenAddModal}
+            onOpenProjectDetail={(id) => setSelectedProjectId(id)}
             onImportCompleteAndDisplay={() => {
               setSelectedFundingFilter('all');
               setSelectedStatusFilter('all');

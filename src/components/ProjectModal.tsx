@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Project, FundingSource, ProjectStatus, Quarter, ExpenseItem } from '../types';
-import { X, Plus, Trash2, Save, AlertTriangle, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { X, Plus, Trash2, Save, AlertTriangle, RefreshCw, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import {
+  findDuplicateMatchesForProject,
+  getDuplicateReasonLabel,
+} from '../utils/duplicateDetection';
 
 function generateNextUniqueCode(projects: Project[], fundingSource: FundingSource): string {
   const prefix = fundingSource === 'budget_annual' ? 'GOV-70-' : 'FUND-70-';
@@ -58,6 +62,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
   const [evaluationMethod, setEvaluationMethod] = useState('');
   const [expenseItems, setExpenseItems] = useState<ExpenseItem[]>([]);
   const [editNotes, setEditNotes] = useState('');
+  const [confirmNonDuplicate, setConfirmNonDuplicate] = useState(false);
 
   useEffect(() => {
     if (projectToEdit) {
@@ -107,6 +112,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       setExpenseItems([]);
       setEditNotes('สร้างโครงการใหม่');
     }
+    setConfirmNonDuplicate(false);
   }, [projectToEdit, isOpen]);
 
   const normalizedCode = code.trim().toLowerCase();
@@ -121,6 +127,42 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       ) || null
     );
   }, [projects, normalizedCode, projectToEdit?.id]);
+
+  // Automatic cross-code duplicate detection (name similarity + budget overlap)
+  const contentDuplicateMatches = useMemo(() => {
+    if (!name.trim()) return [];
+    return findDuplicateMatchesForProject(
+      {
+        id: projectToEdit?.id,
+        code: code.trim(),
+        name: name.trim(),
+        category,
+        fundingSource,
+        budgetAllocated: Number(budgetAllocated) || 0,
+        budgetActual: Number(budgetActual) || 0,
+        participantsPlanned: Number(participantsPlanned) || 0,
+      },
+      projects
+    ).filter((m) => m.existingProject.id !== duplicateProject?.id);
+  }, [
+    projectToEdit?.id,
+    code,
+    name,
+    category,
+    fundingSource,
+    budgetAllocated,
+    budgetActual,
+    participantsPlanned,
+    projects,
+    duplicateProject?.id,
+  ]);
+
+  const hasHighRiskDuplicate = contentDuplicateMatches.some((m) => m.severity === 'high');
+  const isBlockedByDuplicateGuard = hasHighRiskDuplicate && !confirmNonDuplicate;
+
+  useEffect(() => {
+    setConfirmNonDuplicate(false);
+  }, [name, budgetAllocated, budgetActual, fundingSource]);
 
   const suggestedUniqueCode = useMemo(
     () => generateNextUniqueCode(projects, fundingSource),
@@ -175,7 +217,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanedCode = code.trim();
-    if (!cleanedCode || !name.trim() || duplicateProject) return;
+    if (!cleanedCode || !name.trim() || duplicateProject || isBlockedByDuplicateGuard) return;
 
     const fundingSourceNameTh =
       fundingSource === 'budget_annual'
@@ -529,6 +571,73 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
             </div>
           </div>
 
+          {/* Automatic Duplicate & Budget Overlap Alert Panel */}
+          {contentDuplicateMatches.length > 0 && (
+            <div
+              role="alert"
+              className={`p-4 rounded-xl border space-y-3 ${
+                hasHighRiskDuplicate
+                  ? 'bg-amber-950/40 border-amber-500/70 text-amber-100'
+                  : 'bg-cyan-950/35 border-amber-500/45 text-amber-100'
+              }`}
+            >
+              <div className="flex items-start gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1 flex-1">
+                  <div className="font-bold text-xs sm:text-sm text-amber-200">
+                    ระบบตรวจพบข้อมูลโครงการหรืองบประมาณคล้าย/ซ้ำซ้อน ({contentDuplicateMatches.length} รายการ) แม้อยู่คนละรหัสโครงการ
+                  </div>
+                  <p className="text-[11px] text-amber-100/85 leading-relaxed">
+                    กรุณาตรวจสอบรายการด้านล่างก่อนบันทึก เพื่อป้องกันการนับยอดงบประมาณจัดสรรหรือยอดเบิกจ่ายซ้ำซ้อนบนหน้า Dashboard
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                {contentDuplicateMatches.slice(0, 5).map((match) => (
+                  <div
+                    key={match.existingProject.id}
+                    className="p-2.5 rounded-lg bg-[#060D1A]/90 border border-amber-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]"
+                  >
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono font-bold text-cyan-300 px-1.5 py-0.2 rounded bg-cyan-950 border border-cyan-800">
+                          {match.existingProject.code}
+                        </span>
+                        <span className="font-semibold text-white truncate">
+                          {match.existingProject.name}
+                        </span>
+                      </div>
+                      <div className="text-amber-300 font-medium">
+                        {getDuplicateReasonLabel(match.reason)} — {match.explanation}
+                      </div>
+                    </div>
+                    <div className="font-mono tabular-nums text-right shrink-0 text-slate-300">
+                      <div>จัดสรร: ฿{match.existingProject.budgetAllocated.toLocaleString()}</div>
+                      <div className={match.existingProject.budgetActual > 0 ? 'text-emerald-400 font-semibold' : 'text-slate-500'}>
+                        ใช้จริง: ฿{match.existingProject.budgetActual.toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {hasHighRiskDuplicate && (
+                <label className="flex items-start gap-2.5 pt-2 border-t border-amber-800/40 cursor-pointer text-[11px] text-amber-100">
+                  <input
+                    type="checkbox"
+                    checked={confirmNonDuplicate}
+                    onChange={(e) => setConfirmNonDuplicate(e.target.checked)}
+                    className="mt-0.5 accent-amber-400 cursor-pointer"
+                  />
+                  <span className="font-semibold">
+                    ตรวจสอบแล้ว ยืนยันว่ารายการนี้ไม่ใช่ข้อมูลซ้ำซ้อนและต้องการบันทึกแยกเป็นคนละโครงการ
+                  </span>
+                </label>
+              )}
+            </div>
+          )}
+
           {/* Audit Note */}
           <div className="space-y-1 bg-[#060D1A] p-3 rounded-xl border border-cyan-950">
             <label className="block text-slate-300 font-medium">
@@ -546,12 +655,17 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
           {/* Form Actions */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-cyan-950">
             <div className="text-[11px]">
-              {duplicateProject && (
+              {duplicateProject ? (
                 <span className="text-rose-300 font-semibold flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                   กรุณาแก้ไขรหัสโครงการที่ซ้ำกันก่อนกดบันทึก
                 </span>
-              )}
+              ) : isBlockedByDuplicateGuard ? (
+                <span className="text-amber-300 font-semibold flex items-center gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  พบข้อมูลอาจซ้ำซ้อน กรุณาตรวจสอบหรือติ๊กยืนยันก่อนบันทึก
+                </span>
+              ) : null}
             </div>
             <div className="flex items-center justify-end gap-3">
               <button
@@ -563,9 +677,9 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={Boolean(duplicateProject) || !code.trim() || !name.trim()}
+                disabled={Boolean(duplicateProject) || isBlockedByDuplicateGuard || !code.trim() || !name.trim()}
                 className={`px-5 py-2 rounded-xl font-bold flex items-center gap-2 shadow-sm transition-all ${
-                  duplicateProject || !code.trim() || !name.trim()
+                  duplicateProject || isBlockedByDuplicateGuard || !code.trim() || !name.trim()
                     ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
                     : 'bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 cursor-pointer'
                 }`}
