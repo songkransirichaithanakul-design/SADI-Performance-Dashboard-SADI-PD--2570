@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Navbar } from './components/Navbar';
+import { LeftSidebar } from './components/LeftSidebar';
 import { DashboardView } from './components/DashboardView';
 import { GanttTimelineView } from './components/GanttTimelineView';
 import { ProjectsCatalogView } from './components/ProjectsCatalogView';
@@ -63,6 +64,7 @@ const MainAppContent: React.FC = () => {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
 
@@ -111,8 +113,23 @@ const MainAppContent: React.FC = () => {
         isPublicView={isPublicView}
       />
 
-      {/* Main Content Viewport */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+      {/* Body: Left Toolbar Sidebar + Main Content & Footer */}
+      <div className="flex flex-1 min-w-0">
+        <LeftSidebar
+          currentTab={currentTab}
+          setCurrentTab={handleNavTabChange}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+          onOpenShareModal={() => setIsShareModalOpen(true)}
+          onOpenAddModal={handleOpenAddModal}
+          onOpenNotifications={() => setIsNotificationsOpen(true)}
+          onOpenUserModal={() => setIsUserModalOpen(true)}
+          isPublicView={isPublicView}
+        />
+
+        <div className="flex-1 min-w-0 flex flex-col">
+          {/* Main Content Viewport */}
+          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {(currentTab === 'dashboard' || (currentTab === 'admin' && currentUser.role !== 'admin')) && (
           <DashboardView
             onNavigateToProjects={handleNavigateToProjects}
@@ -180,9 +197,11 @@ const MainAppContent: React.FC = () => {
         )}
 
         {currentTab === 'admin' && currentUser.role === 'admin' && !isPublicView && <AdminAuditLogsView />}
-      </main>
+          </main>
 
-      <SadiFooter />
+          <SadiFooter />
+        </div>
+      </div>
 
       {/* Modals & Drawers */}
       <UserAuthModal
