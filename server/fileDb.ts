@@ -357,6 +357,16 @@ class FileDatabaseManager {
         oldProject
       );
 
+      const normalizedCode = updated.code.trim().toLowerCase();
+      const duplicate = current.projects.find(
+        (p) => p.id !== id && p.code.trim().toLowerCase() === normalizedCode
+      );
+      if (duplicate) {
+        throw new Error(
+          `DUPLICATE_CODE: รหัสโครงการ "${updated.code}" ซ้ำกับโครงการ "${duplicate.name}" ที่มีอยู่ในระบบแล้ว กรุณาแก้ไขรหัสให้ไม่ซ้ำกัน`
+        );
+      }
+
       const changedFields: string[] = [];
       if (oldProject.status !== updated.status) {
         changedFields.push(`สถานะ: ${oldProject.status} -> ${updated.status}`);
@@ -422,6 +432,18 @@ class FileDatabaseManager {
         );
       });
 
+      const seenCodes = new Map<string, Project>();
+      for (const proj of updatedList) {
+        const key = proj.code.trim().toLowerCase();
+        const existing = seenCodes.get(key);
+        if (existing) {
+          throw new Error(
+            `DUPLICATE_CODE: พบรหัสโครงการซ้ำ "${proj.code}" ระหว่าง "${existing.name}" และ "${proj.name}" กรุณาแก้ไขรหัสให้ไม่ซ้ำกัน`
+          );
+        }
+        seenCodes.set(key, proj);
+      }
+
       const newLog: AuditLog = {
         id: `log-${Date.now()}`,
         timestamp: now,
@@ -462,6 +484,16 @@ class FileDatabaseManager {
         lastModifiedBy: actorName || 'Admin',
         lastModifiedAt: now,
       });
+
+      const normalizedCode = newProj.code.trim().toLowerCase();
+      const duplicate = current.projects.find(
+        (p) => p.code.trim().toLowerCase() === normalizedCode
+      );
+      if (duplicate) {
+        throw new Error(
+          `DUPLICATE_CODE: รหัสโครงการ "${newProj.code}" ซ้ำกับโครงการ "${duplicate.name}" ที่มีอยู่ในระบบแล้ว กรุณาแก้ไขรหัสให้ไม่ซ้ำกัน`
+        );
+      }
 
       const newLog: AuditLog = {
         id: `log-${Date.now()}`,

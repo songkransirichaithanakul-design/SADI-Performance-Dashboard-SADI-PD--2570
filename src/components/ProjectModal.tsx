@@ -1,7 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Project, FundingSource, ProjectStatus, Quarter, ExpenseItem } from '../types';
-import { X, Plus, Trash2, Save } from 'lucide-react';
+import { X, Plus, Trash2, Save, AlertTriangle, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+
+function generateNextUniqueCode(projects: Project[], fundingSource: FundingSource): string {
+  const prefix = fundingSource === 'budget_annual' ? 'GOV-70-' : 'FUND-70-';
+  const existingCodes = new Set(projects.map((p) => p.code.trim().toLowerCase()));
+  let maxNum = 0;
+  projects.forEach((p) => {
+    const trimmed = p.code.trim().toUpperCase();
+    if (trimmed.startsWith(prefix)) {
+      const tail = Number.parseInt(trimmed.slice(prefix.length), 10);
+      if (Number.isFinite(tail) && tail > maxNum) {
+        maxNum = tail;
+      }
+    }
+  });
+  let nextNum = maxNum + 1;
+  while (existingCodes.has(`${prefix}${String(nextNum).padStart(2, '0')}`.toLowerCase())) {
+    nextNum += 1;
+  }
+  return `${prefix}${String(nextNum).padStart(2, '0')}`;
+}
 
 interface ProjectModalProps {
   isOpen: boolean;
@@ -14,7 +34,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
   onClose,
   projectToEdit,
 }) => {
-  const { addProject, updateProject } = useApp();
+  const { projects, addProject, updateProject } = useApp();
 
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
@@ -64,7 +84,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       setExpenseItems(projectToEdit.expenseItems || []);
       setEditNotes('');
     } else {
-      setCode(`PRJ-${Date.now().toString().slice(-4)}`);
+      setCode(generateNextUniqueCode(projects, 'budget_annual'));
       setName('');
       setCategory('1. การพัฒนาสายวิชาชีพ (Professional Development)');
       setSubCategory('');
@@ -88,6 +108,24 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       setEditNotes('สร้างโครงการใหม่');
     }
   }, [projectToEdit, isOpen]);
+
+  const normalizedCode = code.trim().toLowerCase();
+
+  const duplicateProject = useMemo(() => {
+    if (!normalizedCode) return null;
+    return (
+      projects.find(
+        (p) =>
+          p.id !== projectToEdit?.id &&
+          p.code.trim().toLowerCase() === normalizedCode
+      ) || null
+    );
+  }, [projects, normalizedCode, projectToEdit?.id]);
+
+  const suggestedUniqueCode = useMemo(
+    () => generateNextUniqueCode(projects, fundingSource),
+    [projects, fundingSource]
+  );
 
   if (!isOpen) return null;
 
@@ -136,7 +174,8 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    const cleanedCode = code.trim();
+    if (!cleanedCode || !name.trim() || duplicateProject) return;
 
     const fundingSourceNameTh =
       fundingSource === 'budget_annual'
@@ -147,7 +186,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       updateProject(
         {
           ...projectToEdit,
-          code,
+          code: cleanedCode,
           name: name.trim(),
           category,
           subCategory,
@@ -174,7 +213,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       );
     } else {
       addProject({
-        code,
+        code: cleanedCode,
         name: name.trim(),
         category,
         subCategory,
@@ -238,8 +277,19 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
                   required
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-cyan-900/60 bg-[#060D1A] text-white font-mono"
+                  aria-invalid={Boolean(duplicateProject)}
+                  className={`w-full px-3 py-2 rounded-xl border bg-[#060D1A] text-white font-mono focus:outline-hidden ${
+                    duplicateProject
+                      ? 'border-rose-500 text-rose-200 focus:border-rose-400'
+                      : 'border-cyan-900/60 focus:border-cyan-400'
+                  }`}
                 />
+                {!duplicateProject && normalizedCode && (
+                  <div className="mt-1 flex items-center gap-1 text-[10px] text-emerald-400">
+                    <CheckCircle2 className="w-3 h-3 shrink-0" />
+                    <span>รหัสนี้พร้อมใช้งาน</span>
+                  </div>
+                )}
               </div>
               <div className="sm:col-span-3">
                 <label className="block text-slate-400 font-medium mb-1">ชื่อโครงการ / หลักสูตร *</label>
@@ -253,6 +303,33 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
                 />
               </div>
             </div>
+
+            {duplicateProject && (
+              <div
+                role="alert"
+                className="p-3.5 rounded-xl bg-rose-950/45 border border-rose-500/70 text-rose-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-rose-200">
+                      ไม่สามารถบันทึกได้: รหัสโครงการ "{code.trim()}" ซ้ำกับโครงการที่มีอยู่แล้ว
+                    </div>
+                    <p className="text-[11px] text-rose-200/90">
+                      ซ้ำกับ: <span className="font-semibold text-white">{duplicateProject.name}</span> ({duplicateProject.code}) — กรุณาแก้ไขรหัสโครงการไม่ให้ซ้ำกันก่อนบันทึก
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCode(suggestedUniqueCode)}
+                  className="px-3 py-1.5 rounded-lg bg-rose-500/25 hover:bg-rose-500/40 border border-rose-400/60 text-white font-mono font-semibold text-[11px] inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-center"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>ใช้รหัสว่าง {suggestedUniqueCode}</span>
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -467,21 +544,36 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
           </div>
 
           {/* Form Actions */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-cyan-950">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-medium cursor-pointer"
-            >
-              ยกเลิก
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 font-bold flex items-center gap-2 shadow-sm cursor-pointer"
-            >
-              <Save className="w-4 h-4" />
-              <span>บันทึกข้อมูล</span>
-            </button>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-cyan-950">
+            <div className="text-[11px]">
+              {duplicateProject && (
+                <span className="text-rose-300 font-semibold flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  กรุณาแก้ไขรหัสโครงการที่ซ้ำกันก่อนกดบันทึก
+                </span>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-medium cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                disabled={Boolean(duplicateProject) || !code.trim() || !name.trim()}
+                className={`px-5 py-2 rounded-xl font-bold flex items-center gap-2 shadow-sm transition-all ${
+                  duplicateProject || !code.trim() || !name.trim()
+                    ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 cursor-pointer'
+                }`}
+              >
+                <Save className="w-4 h-4" />
+                <span>บันทึกข้อมูล</span>
+              </button>
+            </div>
           </div>
         </form>
       </div>

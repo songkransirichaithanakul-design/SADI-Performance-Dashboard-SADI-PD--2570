@@ -507,6 +507,8 @@ export function parseRawProjectRecords(
     };
   }
 
+  const seenCodeInImport = new Map<string, { rowNumber: number; name: string; code: string }>();
+
   rawRecords.forEach((rec, index) => {
     const rowNumber = index + 2; // Row accounting for header row
     const rawCode = String(getField(rec, ['รหัสโครงการ', 'รหัส', 'code', 'projectcode']) ?? '').trim();
@@ -547,6 +549,27 @@ export function parseRawProjectRecords(
     };
 
     const nextName = rawName || base.name;
+    const effectiveCode = (rawCode || base.code).trim();
+    const effectiveCodeKey = effectiveCode.toLowerCase();
+
+    // Detect duplicate project codes inside the uploaded sheet/file itself
+    const prevRow = seenCodeInImport.get(effectiveCodeKey);
+    if (prevRow) {
+      errors.push(
+        `พบรหัสโครงการซ้ำกันภายในไฟล์/ชีต: รหัส "${effectiveCode}" ซ้ำกันระหว่างแถวที่ ${prevRow.rowNumber} ("${prevRow.name}") และแถวที่ ${rowNumber} ("${nextName}") กรุณาแก้ไขรหัสไม่ให้ซ้ำกันก่อนนำเข้าใหม่`
+      );
+    } else {
+      seenCodeInImport.set(effectiveCodeKey, { rowNumber, name: nextName, code: effectiveCode });
+    }
+
+    // Detect if a row matched by id/name attempts to reassign its code to another existing project's code
+    const conflictingExisting = codeMap.get(effectiveCodeKey);
+    if (matched && conflictingExisting && conflictingExisting.id !== matched.id) {
+      errors.push(
+        `แถวที่ ${rowNumber}: รหัสโครงการ "${effectiveCode}" ซ้ำกับโครงการอื่นที่มีอยู่ในระบบ ("${conflictingExisting.name}") กรุณาปรับแก้ไขรหัสโครงการให้ถูกต้อง`
+      );
+    }
+
     const rawCat = getField(rec, ['หมวดหมู่', 'หมวดหมู่สมรรถนะ', 'category']);
     const nextCat = rawCat !== undefined && String(rawCat).trim() !== '' ? String(rawCat).trim() : base.category;
 
@@ -609,7 +632,7 @@ export function parseRawProjectRecords(
 
     const updatedProject: Project = {
       ...base,
-      code: rawCode || base.code,
+      code: effectiveCode,
       name: nextName,
       category: nextCat,
       targetGroup: nextTarget,
@@ -702,6 +725,53 @@ export function parseGoogleSheetValues(
 }
 
 /**
+ * Parse an in-memory Excel/CSV workbook buffer into validated project updates/additions.
+ * Shared by local file uploads and direct Google Sheet link exports.
+ */
+export function parseImportedWorkbookBuffer(
+  buffer: ArrayBuffer,
+  existingProjects: Project[],
+  sourceName: string
+): ImportParseResult {
+  const workbook = XLSX.read(buffer, { type: 'array', codepage: 65001 });
+  if (!workbook.SheetNames.length) {
+    throw new Error('ไม่พบแผ่นงาน (Sheet) ในไฟล์ที่นำเข้า');
+  }
+
+  // Prefer our standard template or full export sheet names, otherwise pick first sheet with matching headers
+  const preferredNames = ['ข้อมูลสำหรับนำเข้า', 'ข้อมูลโครงการชุดสมบูรณ์'];
+  let chosenSheet =
+    preferredNames.find((name) => workbook.SheetNames.includes(name)) || workbook.SheetNames[0];
+
+  let rawRecords: Record<string, unknown>[] = [];
+  const initialRecords = XLSX.utils.sheet_to_json<Record<string, unknown>>(
+    workbook.Sheets[chosenSheet],
+    { defval: '' }
+  );
+
+  if (initialRecords.length === 0 || !hasRecognizedProjectColumns(initialRecords[0])) {
+    for (const sName of workbook.SheetNames) {
+      const candidate = XLSX.utils.sheet_to_json<Record<string, unknown>>(
+        workbook.Sheets[sName],
+        { defval: '' }
+      );
+      if (candidate.length > 0 && hasRecognizedProjectColumns(candidate[0])) {
+        chosenSheet = sName;
+        rawRecords = candidate;
+        break;
+      }
+    }
+    if (rawRecords.length === 0) {
+      rawRecords = initialRecords;
+    }
+  } else {
+    rawRecords = initialRecords;
+  }
+
+  return parseRawProjectRecords(rawRecords, existingProjects, sourceName, chosenSheet);
+}
+
+/**
  * Parse uploaded .xlsx, .xls, .csv, or .json file into validated project updates/additions.
  */
 export async function parseImportedFile(
@@ -710,12 +780,10 @@ export async function parseImportedFile(
 ): Promise<ImportParseResult> {
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
 
-  let rawRecords: Record<string, unknown>[] = [];
-  let selectedSheetName = ext === 'json' ? 'JSON' : 'Sheet1';
-
   if (ext === 'json') {
     const text = await file.text();
     const parsed = JSON.parse(text);
+    let rawRecords: Record<string, unknown>[] = [];
     if (Array.isArray(parsed)) {
       rawRecords = parsed;
     } else if (parsed && Array.isArray(parsed.projects)) {
@@ -725,44 +793,9 @@ export async function parseImportedFile(
     } else {
       throw new Error('ไฟล์ JSON ไม่มีโครงสร้างอาร์เรย์โครงการที่รองรับ (รองรับ projects หรือ data)');
     }
-  } else {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array', codepage: 65001 });
-    if (!workbook.SheetNames.length) {
-      throw new Error('ไม่พบแผ่นงาน (Sheet) ในไฟล์ที่อัปโหลด');
-    }
-
-    // Prefer our standard template or full export sheet names, otherwise pick first sheet with matching headers
-    const preferredNames = ['ข้อมูลสำหรับนำเข้า', 'ข้อมูลโครงการชุดสมบูรณ์'];
-    let chosenSheet =
-      preferredNames.find((name) => workbook.SheetNames.includes(name)) || workbook.SheetNames[0];
-
-    const initialRecords = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-      workbook.Sheets[chosenSheet],
-      { defval: '' }
-    );
-
-    if (initialRecords.length === 0 || !hasRecognizedProjectColumns(initialRecords[0])) {
-      for (const sName of workbook.SheetNames) {
-        const candidate = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-          workbook.Sheets[sName],
-          { defval: '' }
-        );
-        if (candidate.length > 0 && hasRecognizedProjectColumns(candidate[0])) {
-          chosenSheet = sName;
-          rawRecords = candidate;
-          break;
-        }
-      }
-      if (rawRecords.length === 0) {
-        rawRecords = initialRecords;
-      }
-    } else {
-      rawRecords = initialRecords;
-    }
-
-    selectedSheetName = chosenSheet;
+    return parseRawProjectRecords(rawRecords, existingProjects, file.name, 'JSON');
   }
 
-  return parseRawProjectRecords(rawRecords, existingProjects, file.name, selectedSheetName);
+  const buffer = await file.arrayBuffer();
+  return parseImportedWorkbookBuffer(buffer, existingProjects, file.name);
 }

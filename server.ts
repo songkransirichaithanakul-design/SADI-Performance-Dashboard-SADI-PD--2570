@@ -60,8 +60,10 @@ async function startServer() {
         health,
       });
     } catch (error) {
-      return res.status(500).json({
-        error: error instanceof Error ? error.message : 'Failed to bulk update projects',
+      const message = error instanceof Error ? error.message : 'Failed to bulk update projects';
+      const status = message.includes('DUPLICATE_CODE') ? 409 : 500;
+      return res.status(status).json({
+        error: message.replace(/^DUPLICATE_CODE:\s*/, ''),
       });
     }
   });
@@ -89,8 +91,12 @@ async function startServer() {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to update project';
-      const status = message.includes('not found') ? 404 : 500;
-      return res.status(status).json({ error: message });
+      const status = message.includes('DUPLICATE_CODE')
+        ? 409
+        : message.includes('not found')
+        ? 404
+        : 500;
+      return res.status(status).json({ error: message.replace(/^DUPLICATE_CODE:\s*/, '') });
     }
   });
 
@@ -110,8 +116,10 @@ async function startServer() {
         health,
       });
     } catch (error) {
-      return res.status(500).json({
-        error: error instanceof Error ? error.message : 'Failed to create project',
+      const message = error instanceof Error ? error.message : 'Failed to create project';
+      const status = message.includes('DUPLICATE_CODE') ? 409 : 500;
+      return res.status(status).json({
+        error: message.replace(/^DUPLICATE_CODE:\s*/, ''),
       });
     }
   });
@@ -230,6 +238,143 @@ async function startServer() {
     } catch (error) {
       return res.status(500).json({
         error: error instanceof Error ? error.message : 'Failed to export database',
+      });
+    }
+  });
+
+  // Pull a shared Google Sheet directly via its export URL (fallback when OAuth popup domain is not yet allowlisted)
+  app.post('/api/sheets/pull-link', async (req, res) => {
+    try {
+      const rawId = typeof req.body?.spreadsheetId === 'string' ? req.body.spreadsheetId.trim() : '';
+      if (!/^[a-zA-Z0-9_-]{20,80}$/.test(rawId)) {
+        return res.status(400).json({
+          error:
+            'รหัส Google Sheet ไม่ถูกต้อง กรุณาวางลิงก์เต็มจาก Google Sheets (เช่น https://docs.google.com/spreadsheets/d/...)',
+        });
+      }
+
+      const isAllowedGoogleHost = (hostname: string): boolean => {
+        const host = hostname.toLowerCase();
+        return (
+          host === 'docs.google.com' ||
+          host === 'drive.google.com' ||
+          host.endsWith('.googleusercontent.com')
+        );
+      };
+
+      const MAX_BYTES = 10 * 1024 * 1024; // 10 MB cap
+      const MAX_REDIRECTS = 5;
+      let currentUrl = `https://docs.google.com/spreadsheets/d/${rawId}/export?format=xlsx`;
+      let response: Response | null = null;
+
+      for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+        const parsedUrl = new URL(currentUrl);
+        if (parsedUrl.protocol !== 'https:' || !isAllowedGoogleHost(parsedUrl.hostname)) {
+          return res.status(403).json({
+            error:
+              'ชีตนี้ตั้งค่าเป็นส่วนตัว (Private) ไม่สามารถดึงผ่านลิงก์โดยตรงได้ กรุณาเข้าสู่ระบบ Google หรือตั้งค่าแชร์ชีตเป็น "ทุกคนที่มีลิงก์ (ผู้มีสิทธิ์อ่าน)" ชั่วคราว แล้วกดดึงข้อมูลอีกครั้ง',
+          });
+        }
+
+        const resp = await fetch(currentUrl, {
+          method: 'GET',
+          redirect: 'manual',
+          signal: AbortSignal.timeout(15000),
+          headers: {
+            'User-Agent': 'SADI-Portal-Sheet-Importer/1.0',
+          },
+        });
+
+        if (resp.status >= 300 && resp.status < 400) {
+          const location = resp.headers.get('location');
+          if (!location) {
+            return res.status(502).json({ error: 'ไม่สามารถติดตามลิงก์ดาวน์โหลดจาก Google Sheets ได้' });
+          }
+          const nextUrl = new URL(location, currentUrl);
+          if (nextUrl.hostname.toLowerCase() === 'accounts.google.com') {
+            return res.status(403).json({
+              error:
+                'ชีตนี้ตั้งค่าเป็นส่วนตัว (Private) ไม่สามารถดึงผ่านลิงก์โดยตรงได้ กรุณาตั้งค่าแชร์ใน Google Sheets เป็น "ทุกคนที่มีลิงก์ (ผู้มีสิทธิ์อ่าน)" แล้วกดดึงข้อมูลอีกครั้ง หรือดาวน์โหลดเป็นไฟล์ .xlsx มาอัปโหลดในแท็บนำเข้าไฟล์จากเครื่อง',
+            });
+          }
+          currentUrl = nextUrl.toString();
+          continue;
+        }
+
+        response = resp;
+        break;
+      }
+
+      if (!response) {
+        return res.status(502).json({ error: 'การเชื่อมต่อกับ Google Sheets มีการเปลี่ยนเส้นทางมากเกินกำหนด' });
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        return res.status(403).json({
+          error:
+            'ชีตนี้ตั้งค่าเป็นส่วนตัว (Private) กรุณากดปุ่ม "แชร์" ใน Google Sheets แล้วเลือก "ทุกคนที่มีลิงก์ (ผู้มีสิทธิ์อ่าน)" จากนั้นกดดึงข้อมูลอีกครั้ง',
+        });
+      }
+
+      if (response.status === 404) {
+        return res.status(404).json({
+          error: 'ไม่พบไฟล์ Google Sheet ตามลิงก์ที่ระบุ กรุณาตรวจสอบว่าลิงก์ถูกต้องและไฟล์ยังไม่ถูกลบ',
+        });
+      }
+
+      if (!response.ok) {
+        return res.status(502).json({
+          error: `ไม่สามารถดึงไฟล์จาก Google Sheets ได้ (รหัสสถานะ ${response.status})`,
+        });
+      }
+
+      const chunks: Uint8Array[] = [];
+      let totalLength = 0;
+      const reader = response.body?.getReader();
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            totalLength += value.byteLength;
+            if (totalLength > MAX_BYTES) {
+              await reader.cancel();
+              return res.status(413).json({
+                error: 'ไฟล์ Google Sheet มีขนาดใหญ่เกิน 10 MB กรุณาดาวน์โหลดเป็นไฟล์ .xlsx แล้วนำเข้าจากเครื่องแทน',
+              });
+            }
+            chunks.push(value);
+          }
+        }
+      } else {
+        const ab = await response.arrayBuffer();
+        if (ab.byteLength > MAX_BYTES) {
+          return res.status(413).json({
+            error: 'ไฟล์ Google Sheet มีขนาดใหญ่เกิน 10 MB กรุณาดาวน์โหลดเป็นไฟล์ .xlsx แล้วนำเข้าจากเครื่องแทน',
+          });
+        }
+        chunks.push(new Uint8Array(ab));
+      }
+
+      const buffer = Buffer.concat(chunks);
+      // Verify XLSX (ZIP) signature "PK" (0x50 0x4B) to ensure Google did not return an HTML login/error page
+      if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
+        return res.status(403).json({
+          error:
+            'ชีตนี้ยังไม่เปิดสิทธิ์ให้เข้าถึงผ่านลิงก์ กรุณากดปุ่ม "แชร์" ใน Google Sheets → เปลี่ยนเป็น "ทุกคนที่มีลิงก์ (ผู้มีสิทธิ์อ่าน)" แล้วกดดึงข้อมูลอีกครั้ง หรือดาวน์โหลดไฟล์ .xlsx จาก Google Sheets มาอัปโหลดในแท็บนำเข้าไฟล์จากเครื่อง',
+        });
+      }
+
+      return res.json({
+        base64: buffer.toString('base64'),
+        fileName: `Google Sheet (${rawId.slice(0, 8)}...)`,
+      });
+    } catch (error) {
+      const isTimeout = error instanceof Error && error.name === 'TimeoutError';
+      return res.status(isTimeout ? 504 : 500).json({
+        error: isTimeout
+          ? 'เชื่อมต่อ Google Sheets ใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง'
+          : 'ไม่สามารถดึงข้อมูลจากลิงก์ Google Sheet ได้ในขณะนี้ กรุณาลองใหม่หรือดาวน์โหลดเป็นไฟล์ .xlsx มาอัปโหลดแทน',
       });
     }
   });

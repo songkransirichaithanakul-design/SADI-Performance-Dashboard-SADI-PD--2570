@@ -61,6 +61,17 @@ export class MissingSheetsScopeError extends Error {
   }
 }
 
+export class UnauthorizedDomainError extends Error {
+  readonly domain: string;
+  constructor(domain: string) {
+    super(
+      `โดเมน "${domain}" ยังไม่ได้รับอนุญาตใน Firebase Authentication (auth/unauthorized-domain) ท่านสามารถเพิ่มโดเมนนี้ใน Firebase Console หรือใช้ช่อง "ดึงข้อมูลจากลิงก์ Google Sheet โดยตรง" ด้านล่างได้ทันที`
+    );
+    this.name = 'UnauthorizedDomainError';
+    this.domain = domain;
+  }
+}
+
 async function hasGrantedSheetsScope(accessToken: string): Promise<boolean> {
   try {
     const res = await fetch(
@@ -108,6 +119,10 @@ export async function googleSignIn(): Promise<GoogleAuthSession> {
     return { user: result.user, accessToken };
   } catch (err: unknown) {
     const code = (err as { code?: string })?.code;
+    if (code === 'auth/unauthorized-domain') {
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'unknown-domain';
+      throw new UnauthorizedDomainError(currentHost);
+    }
     if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
       throw new Error('ยกเลิกการเข้าสู่ระบบด้วยบัญชี Google');
     }

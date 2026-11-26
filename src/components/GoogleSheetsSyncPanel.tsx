@@ -15,9 +15,16 @@ import {
   DownloadCloud,
   X,
   Sheet,
+  Copy,
+  Check,
+  Globe,
 } from 'lucide-react';
 import type { Project } from '../types';
-import { ImportParseResult, parseGoogleSheetValues } from '../utils/spreadsheet';
+import {
+  ImportParseResult,
+  parseGoogleSheetValues,
+  parseImportedWorkbookBuffer,
+} from '../utils/spreadsheet';
 import {
   initGoogleAuth,
   googleSignIn,
@@ -25,7 +32,9 @@ import {
   clearCachedAccessToken,
   getGoogleAccessToken,
   MissingSheetsScopeError,
+  UnauthorizedDomainError,
 } from '../services/googleAuth';
+import firebaseConfig from '../../firebase-applet-config.json';
 import {
   extractSpreadsheetId,
   fetchSpreadsheetMetadata,
@@ -42,6 +51,7 @@ import {
 
 const SAVED_SHEET_URL_KEY = 'sadi_gsheet_url_v1';
 const SAVED_SHEET_TAB_KEY = 'sadi_gsheet_tab_v1';
+const FIREBASE_AUTH_SETTINGS_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`;
 
 interface GoogleSheetsSyncPanelProps {
   projects: Project[];
@@ -109,10 +119,13 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
 
   const [isLoadingMeta, setIsLoadingMeta] = useState(false);
   const [isPullingData, setIsPullingData] = useState(false);
+  const [isPullingDirectLink, setIsPullingDirectLink] = useState(false);
   const [isMutatingSheet, setIsMutatingSheet] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [scopeMissingNotice, setScopeMissingNotice] = useState<boolean>(false);
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
+  const [copiedDomain, setCopiedDomain] = useState(false);
   const [lastPulledAt, setLastPulledAt] = useState<string | null>(null);
   const [pendingModal, setPendingModal] = useState<PendingMutationModal>(null);
 
@@ -174,6 +187,7 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
     setLocalError(null);
     setStatusMessage(null);
     setScopeMissingNotice(false);
+    setUnauthorizedDomain(null);
     onError(null);
     setIsSigningIn(true);
     try {
@@ -182,6 +196,7 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
       setAccessToken(session.accessToken);
       setNeedsReauthUser(null);
       setScopeMissingNotice(false);
+      setUnauthorizedDomain(null);
       setStatusMessage(
         `เชื่อมต่อบัญชี Google (${session.user.email || session.user.displayName || 'สำเร็จ'}) พร้อมสิทธิ์ใช้งาน Google Sheets แล้ว`
       );
@@ -192,7 +207,10 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
         void loadMetadata(savedId, session.accessToken, true);
       }
     } catch (err) {
-      if (err instanceof MissingSheetsScopeError) {
+      if (err instanceof UnauthorizedDomainError) {
+        setAccessToken(null);
+        setUnauthorizedDomain(err.domain);
+      } else if (err instanceof MissingSheetsScopeError) {
         setAccessToken(null);
         setScopeMissingNotice(true);
       } else {
@@ -203,10 +221,93 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
     }
   };
 
+  const handleCopyDomain = async () => {
+    if (!unauthorizedDomain) return;
+    try {
+      await navigator.clipboard.writeText(unauthorizedDomain);
+      setCopiedDomain(true);
+      setTimeout(() => setCopiedDomain(false), 2000);
+    } catch {
+      // Clipboard API may be unavailable in restricted contexts
+    }
+  };
+
+  const handlePullFromDirectLink = async () => {
+    setLocalError(null);
+    setStatusMessage(null);
+    onError(null);
+
+    const spreadsheetId = extractSpreadsheetId(sheetInput);
+    if (!spreadsheetId) {
+      setLocalError(
+        'รูปแบบลิงก์หรือรหัส Google Sheet ไม่ถูกต้อง กรุณาวางลิงก์เต็มจากแถบที่อยู่ (เช่น https://docs.google.com/spreadsheets/d/...)'
+      );
+      return;
+    }
+
+    persistSheetPreference(sheetInput.trim());
+    setIsPullingDirectLink(true);
+    try {
+      const response = await fetch('/api/sheets/pull-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spreadsheetId }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        base64?: string;
+        fileName?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !payload.base64) {
+        setLocalError(
+          payload.error ||
+            'ไม่สามารถดึงข้อมูลจากลิงก์ Google Sheet ได้ กรุณาตรวจสอบสิทธิ์การแชร์ชีตเป็น "ทุกคนที่มีลิงก์ดูได้"'
+        );
+        return;
+      }
+
+      const binaryString = atob(payload.base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i += 1) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      const parsed = parseImportedWorkbookBuffer(
+        bytes.buffer,
+        projects,
+        payload.fileName || `Google Sheet (${spreadsheetId.slice(0, 8)}...)`
+      );
+
+      if (parsed.errors.length > 0) {
+        setLocalError(parsed.errors.join(' '));
+        onError(parsed.errors.join(' '));
+      } else {
+        onParsedResult(parsed);
+        setLastPulledAt(
+          new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        );
+        setStatusMessage(
+          `ดึงข้อมูลล่าสุดจากลิงก์ Google Sheet (แท็บ: ${parsed.sheetName}) เรียบร้อยแล้ว — กรุณาตรวจสอบพรีวิวด้านล่างแล้วกดปุ่ม "ยืนยันส่งและแสดงผลข้อมูลทันที"`
+        );
+      }
+    } catch (err) {
+      setLocalError(
+        err instanceof Error
+          ? err.message
+          : 'เกิดข้อผิดพลาดระหว่างดึงข้อมูลจากลิงก์ Google Sheet กรุณาลองใหม่อีกครั้ง'
+      );
+    } finally {
+      setIsPullingDirectLink(false);
+    }
+  };
+
   const handleSignOut = async () => {
     setLocalError(null);
     setStatusMessage(null);
     setScopeMissingNotice(false);
+    setUnauthorizedDomain(null);
     await googleSignOut();
     setGoogleUser(null);
     setAccessToken(null);
@@ -403,44 +504,96 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
 
       {/* Auth Gate or Connected Workspace */}
       {!isAuthenticated ? (
-        <div className="rounded-xl p-5 sm:p-6 bg-[#060D1A] border border-cyan-800/60 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-start gap-3.5">
-            <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 flex items-center justify-center shrink-0">
-              <ShieldCheck className="w-5 h-5" />
-            </div>
-            <div className="space-y-1">
-              <div className="font-bold text-sm text-white">
-                {needsReauthUser
-                  ? `ยืนยันสิทธิ์เชื่อมต่อ Google Sheets อีกครั้ง (${needsReauthUser.email || needsReauthUser.displayName})`
-                  : 'เชื่อมต่อ Google Sheets แบบปลอดภัยผ่านบัญชี Google (Google OAuth)'}
+        <div className="space-y-4">
+          <div className="rounded-xl p-5 sm:p-6 bg-[#060D1A] border border-cyan-800/60 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5" />
               </div>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                {needsReauthUser
-                  ? 'เพื่อความปลอดภัยสูงสุด ระบบเก็บสิทธิ์การเข้าถึงไว้ในหน่วยความจำชั่วคราวเท่านั้น กรุณากดปุ่มด้านขวาเพื่อเชื่อมต่อ Google Sheets ในเซสชันนี้'
-                  : 'เข้าถึงเฉพาะไฟล์ Google Sheets ที่ท่านเป็นเจ้าของหรือได้รับแชร์สิทธิ์ ไม่จำเป็นต้องตั้งค่าไฟล์เป็นสาธารณะ'}
-              </p>
+              <div className="space-y-1">
+                <div className="font-bold text-sm text-white">
+                  {needsReauthUser
+                    ? `ยืนยันสิทธิ์เชื่อมต่อ Google Sheets อีกครั้ง (${needsReauthUser.email || needsReauthUser.displayName})`
+                    : 'เชื่อมต่อ Google Sheets แบบปลอดภัยผ่านบัญชี Google (Google OAuth)'}
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  {needsReauthUser
+                    ? 'เพื่อความปลอดภัยสูงสุด ระบบเก็บสิทธิ์การเข้าถึงไว้ในหน่วยความจำชั่วคราวเท่านั้น กรุณากดปุ่มด้านขวาเพื่อเชื่อมต่อ Google Sheets ในเซสชันนี้'
+                    : 'เข้าถึงเฉพาะไฟล์ Google Sheets ที่ท่านเป็นเจ้าของหรือได้รับแชร์สิทธิ์ ไม่จำเป็นต้องตั้งค่าไฟล์เป็นสาธารณะ'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <button
+                type="button"
+                disabled={isSigningIn}
+                onClick={() => void handleSignIn()}
+                className="px-4 py-2.5 rounded-lg bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 font-semibold text-xs inline-flex items-center gap-2.5 shadow-sm transition-all cursor-pointer disabled:opacity-60 whitespace-nowrap"
+              >
+                {isSigningIn ? <Loader2 className="w-4 h-4 animate-spin text-blue-600" /> : <GoogleGIcon />}
+                <span>{isSigningIn ? 'กำลังเชื่อมต่อบัญชี Google...' : 'Sign in with Google · เชื่อมต่อ Google Sheets'}</span>
+              </button>
+              {needsReauthUser && (
+                <button
+                  type="button"
+                  onClick={() => void handleSignOut()}
+                  className="px-3 py-2.5 rounded-lg bg-[#091224] border border-cyan-900/60 text-slate-300 hover:text-white text-xs font-medium cursor-pointer"
+                >
+                  เปลี่ยนบัญชี
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              disabled={isSigningIn}
-              onClick={() => void handleSignIn()}
-              className="px-4 py-2.5 rounded-lg bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 font-semibold text-xs inline-flex items-center gap-2.5 shadow-sm transition-all cursor-pointer disabled:opacity-60 whitespace-nowrap"
-            >
-              {isSigningIn ? <Loader2 className="w-4 h-4 animate-spin text-blue-600" /> : <GoogleGIcon />}
-              <span>{isSigningIn ? 'กำลังเชื่อมต่อบัญชี Google...' : 'Sign in with Google · เชื่อมต่อ Google Sheets'}</span>
-            </button>
-            {needsReauthUser && (
+          {/* Direct Link Pull Fallback — Works on every domain without Firebase OAuth domain allowlist */}
+          <div className="rounded-xl p-4 sm:p-5 bg-[#060D1A] border border-cyan-900/70 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 flex items-center justify-center shrink-0 mt-0.5">
+                <Globe className="w-4 h-4" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="font-bold text-xs sm:text-sm text-white flex flex-wrap items-center gap-2">
+                  <span>ดึงข้อมูลจากลิงก์ Google Sheet โดยตรง (ไม่ต้องล็อกอิน Google)</span>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/40 text-cyan-300">
+                    ใช้ได้ทันทีทุกโดเมน
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  วางลิงก์ Google Sheet ที่แชร์แบบ <strong className="text-slate-200">"ทุกคนที่มีลิงก์ (ผู้มีสิทธิ์อ่าน/แก้ไข)"</strong> แล้วกดดึงข้อมูลเพื่อพรีวิวและอัปเดตหน้าแดชบอร์ดได้ทันที (หากไฟล์เป็นส่วนตัว สามารถดาวน์โหลดไฟล์ <code className="text-cyan-300">.xlsx</code> จาก Google Sheets มาอัปโหลดในแท็บ "นำเข้าไฟล์จากเครื่อง" ได้เช่นกัน)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Link2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400" />
+                <input
+                  type="text"
+                  value={sheetInput}
+                  onChange={(e) => setSheetInput(e.target.value)}
+                  placeholder="วางลิงก์ Google Sheet เช่น https://docs.google.com/spreadsheets/d/..."
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-cyan-900/70 bg-[#091224] text-white text-xs placeholder:text-slate-500 focus:outline-hidden focus:border-cyan-400"
+                />
+              </div>
               <button
                 type="button"
-                onClick={() => void handleSignOut()}
-                className="px-3 py-2.5 rounded-lg bg-[#091224] border border-cyan-900/60 text-slate-300 hover:text-white text-xs font-medium cursor-pointer"
+                disabled={isPullingDirectLink || !sheetInput.trim()}
+                onClick={() => void handlePullFromDirectLink()}
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 font-extrabold text-xs inline-flex items-center justify-center gap-2 shadow-[0_0_16px_rgba(6,182,212,0.24)] cursor-pointer transition-all disabled:opacity-50 whitespace-nowrap"
               >
-                เปลี่ยนบัญชี
+                {isPullingDirectLink ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <DownloadCloud className="w-4 h-4" />
+                )}
+                <span>
+                  {isPullingDirectLink
+                    ? 'กำลังดึงและตรวจสอบข้อมูล...'
+                    : 'ดึงข้อมูลจากลิงก์มาตรวจสอบทันที'}
+                </span>
               </button>
-            )}
+            </div>
           </div>
         </div>
       ) : (
@@ -627,6 +780,74 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Unauthorized Domain Guided Fix Card */}
+      {unauthorizedDomain && (
+        <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-600/70 text-amber-100 text-xs space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1.5">
+                <div className="font-bold text-amber-200">
+                  โดเมนนี้ยังไม่ได้เพิ่มในรายการอนุญาตของ Firebase (auth/unauthorized-domain)
+                </div>
+                <p className="text-[11px] text-amber-100/90 leading-relaxed">
+                  ท่านสามารถใช้งานได้ทันที 2 วิธี:
+                </p>
+                <ol className="list-decimal list-inside space-y-1 text-amber-100/90 text-[11px]">
+                  <li>
+                    <strong className="text-cyan-300">วิธีด่วน (ไม่ต้องตั้งค่า):</strong> วางลิงก์ Google Sheet ในช่อง{' '}
+                    <strong className="text-white">"ดึงข้อมูลจากลิงก์ Google Sheet โดยตรง"</strong> ด้านบน แล้วกดดึงข้อมูลได้ทันที
+                  </li>
+                  <li>
+                    <strong className="text-white">วิธีเปิดใช้ Google Login ถาวรบนโดเมนนี้:</strong> คัดลอกชื่อโดเมนด้านล่าง แล้วนำไปกด{' '}
+                    <strong className="text-white">Add domain</strong> ที่ Firebase Console → Authentication → Settings → Authorized domains
+                  </li>
+                </ol>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setUnauthorizedDomain(null)}
+              className="text-amber-400 hover:text-white cursor-pointer shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="pl-6 flex flex-wrap items-center gap-2">
+            <code className="px-2.5 py-1.5 rounded-lg bg-[#060D1A] border border-amber-700/70 text-amber-200 font-mono text-[11px] break-all">
+              {unauthorizedDomain}
+            </code>
+            <button
+              type="button"
+              onClick={() => void handleCopyDomain()}
+              className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-100 font-semibold text-[11px] inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              {copiedDomain ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>คัดลอกโดเมนแล้ว</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>คัดลอกโดเมน</span>
+                </>
+              )}
+            </button>
+            <a
+              href={FIREBASE_AUTH_SETTINGS_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-900 font-bold text-[11px] inline-flex items-center gap-1.5"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
+              <span>เปิดหน้า Firebase Authorized Domains</span>
+            </a>
+          </div>
         </div>
       )}
 
